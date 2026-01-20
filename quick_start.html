@@ -1,0 +1,1417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICT Order Block Pro [Pagani] - Quick Start Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent-green: #00ff88;
+            --accent-red: #ff3366;
+            --accent-yellow: #ffd700;
+            --accent-orange: #ff8c00;
+            --accent-blue: #58a6ff;
+            --border-color: #30363d;
+            --code-bg: #161b22;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-primary);
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin: 30px 0 20px;
+            color: var(--accent-blue);
+            border-bottom: 3px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            font-size: 2em;
+            margin: 40px 0 20px;
+            color: var(--accent-green);
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+
+        h3 {
+            font-size: 1.5em;
+            margin: 30px 0 15px;
+            color: var(--accent-yellow);
+        }
+
+        h4 {
+            font-size: 1.2em;
+            margin: 20px 0 10px;
+            color: var(--text-primary);
+        }
+
+        p {
+            margin: 15px 0;
+            color: var(--text-primary);
+        }
+
+        ul, ol {
+            margin: 15px 0;
+            padding-left: 30px;
+        }
+
+        li {
+            margin: 8px 0;
+            color: var(--text-primary);
+        }
+
+        code {
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: var(--accent-green);
+            font-size: 0.9em;
+        }
+
+        pre {
+            background: var(--bg-secondary);
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 20px 0;
+            border-left: 4px solid var(--accent-blue);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: var(--text-primary);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th {
+            background: var(--bg-tertiary);
+            color: var(--accent-yellow);
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .highlight-box {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--accent-green);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .warning-box {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--accent-red);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .info-box {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--accent-blue);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .tip-box {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--accent-yellow);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        hr {
+            border: none;
+            border-top: 2px solid var(--border-color);
+            margin: 40px 0;
+        }
+
+        strong {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin: 0 5px;
+        }
+
+        .badge-new {
+            background: var(--accent-green);
+            color: var(--bg-primary);
+        }
+
+        .badge-fixed {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .badge-improved {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        blockquote {
+            border-left: 4px solid var(--accent-blue);
+            padding-left: 20px;
+            margin: 20px 0;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .toc {
+            background: var(--bg-secondary);
+            padding: 30px;
+            border-radius: 8px;
+            margin: 30px 0;
+            border: 2px solid var(--border-color);
+        }
+
+        .toc h2 {
+            margin-top: 0;
+            border-bottom: none;
+        }
+
+        .toc ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .toc li {
+            margin: 10px 0;
+        }
+
+        .toc a {
+            color: var(--accent-blue);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .toc a:hover {
+            color: var(--accent-green);
+            text-decoration: underline;
+        }
+
+        .header {
+            text-align: center;
+            padding: 40px 0;
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+            border-radius: 12px;
+            margin-bottom: 40px;
+            border: 2px solid var(--border-color);
+        }
+
+        .header h1 {
+            border-bottom: none;
+            margin: 0;
+        }
+
+        .version-badge {
+            display: inline-block;
+            background: var(--accent-green);
+            color: var(--bg-primary);
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-top: 15px;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            h2 {
+                font-size: 1.5em;
+            }
+
+            table {
+                font-size: 0.9em;
+            }
+
+            th, td {
+                padding: 8px;
+            }
+        }
+
+        @media print {
+            body {
+                background: white;
+                color: black;
+            }
+
+            .header {
+                background: #f5f5f5;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>ICT Order Block Pro [Pagani]</h1>
+        <p style="font-size: 1.2em; margin-top: 10px;">Quick Start Guide</p>
+        <span class="version-badge">Version 3.3.0</span>
+    </div>
+
+    <div class="toc">
+        <h2>📋 Table of Contents</h2>
+        <ul>
+            <li><a href="#quick-reference">Quick Reference Card</a></li>
+            <li><a href="#whats-new">What's New in v3.1.0</a></li>
+            <li><a href="#quick-setup">Quick Setup (60 Seconds)</a></li>
+            <li><a href="#how-to-trade">How to Trade Order Blocks</a></li>
+            <li><a href="#dashboard">Understanding the Dashboard</a></li>
+            <li><a href="#settings">Settings Guide</a></li>
+            <li><a href="#advanced-settings">Advanced Settings</a></li>
+            <li><a href="#visual-indicators">Visual Indicators</a></li>
+            <li><a href="#alerts">Alert Setup</a></li>
+            <li><a href="#pro-tips">Pro Tips</a></li>
+            <li><a href="#troubleshooting">Troubleshooting</a></li>
+            <li><a href="#example-trade">Example Trade Setup</a></li>
+            <li><a href="#liquidity-deep-dive">Liquidity Sweeps Deep Dive</a></li>
+            <li><a href="#power-feature">Power Row Feature</a></li>
+        </ul>
+    </div>
+
+    <section id="quick-reference">
+        <h2>📋 Quick Reference Card</h2>
+        <div class="highlight-box">
+            <h3>Order Block Quality (Focus on these!)</h3>
+            <ul>
+                <li>★ <strong>Elite</strong> = Best (3-4 points: VP confirmed + multiple confirmations) - <strong>Trade these!</strong></li>
+                <li>◆ <strong>Strong</strong> = Good (2-3 points: multiple confirmations) - <strong>Trade these!</strong></li>
+                <li>◇ <strong>Mid</strong> = Okay (1 point: some confirmation) - Use caution</li>
+                <li>○ <strong>Weak</strong> = Avoid (0 points: basic detection only) - Skip</li>
+            </ul>
+        </div>
+
+        <div class="info-box">
+            <h3>Entry Checklist</h3>
+            <ol>
+                <li>✅ Elite★ or Strong◆ block identified</li>
+                <li>✅ Price retests the zone (see "ACTIVE" status)</li>
+                <li>✅ Rejection wick forms (↗ BOUNCE or ↘ REJECT)</li>
+                <li>✅ Volume confirms (check dashboard "Vol" column)</li>
+                <li>✅ Aligned with trend (check higher timeframe)</li>
+                <li>✅ Set stop loss beyond OB zone (5-10 pips)</li>
+            </ol>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="whats-new">
+        <h2>🚀 What's New in v3.3.0</h2>
+        <div class="highlight-box">
+            <h3>POWER ROW - Multi-Timeframe Auto-Switching: Real-time intrabar volume dominance!</h3>
+            <ul>
+                <li>✅ <strong>Intrabar Volume Analysis</strong> - Uses lower TF data for real-time BUY/SELL pressure detection</li>
+                <li>✅ <strong>Auto LTF Selection</strong> - Dynamically selects optimal lower timeframe (1m→4h based on chart TF)</li>
+                <li>✅ <strong>Neutral Band</strong> - Configurable zone (default 10%) prevents noise when dominance is weak</li>
+                <li>✅ <strong>Flip Confirmation</strong> - Requires N consecutive bars (auto-scaled: 2-5) before side change to reduce whipsaws</li>
+                <li>✅ <strong>Auto-Scaling Smoothing</strong> - 6 bars (scalping) → 18 bars (daily) for stable display without lag</li>
+                <li>✅ <strong>Dashboard Integration</strong> - Shows: Power @5m | BUY/SELL/NEUTRAL | xx.x% | N bars with confidence</li>
+                <li>✅ <strong>Safety Features</strong> - Never requests higher TF than chart, handles low-volume/doji gracefully</li>
+                <li>✅ <strong>Manual Override</strong> - Full control over LTF, smoothing, and stability when Auto mode doesn't fit</li>
+                <li>✅ <strong>Doji Handling</strong> - Three modes: carry last direction, use prev close, or ignore entirely</li>
+            </ul>
+
+            <h4>Auto LTF Mapping (Chart TF → Intrabar TF):</h4>
+            <table>
+                <thead>
+                    <tr><th>Chart Timeframe</th><th>Lower TF Used</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>≤ 5m</td><td>1m</td><td>Maximum granularity for scalping</td></tr>
+                    <tr><td>≤ 15m</td><td>1m</td><td>Detailed intrabar analysis for day trading</td></tr>
+                    <tr><td>≤ 1h</td><td>5m</td><td>Balanced resolution for intraday</td></tr>
+                    <tr><td>≤ 4h</td><td>15m</td><td>Sufficient detail for swing entries</td></tr>
+                    <tr><td>≤ 1D</td><td>1h</td><td>Hourly context for daily bars</td></tr>
+                    <tr><td>Weekly+</td><td>4h</td><td>Session-level analysis for position trading</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="whats-new-310">
+        <h2>🚀 What's New in v3.1.0</h2>
+        <div class="highlight-box">
+            <h3>ICT LIQUIDITY SWEEP DETECTION: Track and trade liquidity sweeps like the pros!</h3>
+            <ul>
+                <li>✅ <strong>Buy-Side Liquidity (BSL)</strong> - Stops above swing highs (target for bearish sweeps)</li>
+                <li>✅ <strong>Sell-Side Liquidity (SSL)</strong> - Stops below swing lows (target for bullish sweeps)</li>
+                <li>✅ <strong>Sweep vs Run Detection</strong> - Distinguish reversals from continuations</li>
+                <li>✅ <strong>Equal Highs/Lows Detection</strong> - Identify clustered liquidity zones (stronger targets)</li>
+                <li>✅ <strong>Quality Scoring</strong> - Strong/Mid/Weak ratings based on wick size, volume, OB confluence</li>
+                <li>✅ <strong>Order Block Confluence</strong> - Detects when sweeps occur near existing OB zones</li>
+                <li>✅ <strong>Visual Components</strong> - Dashed liquidity lines, sweep event boxes with quality labels</li>
+                <li>✅ <strong>Dashboard Integration</strong> - Shows nearest BSL/SSL with distance tracking</li>
+                <li>✅ <strong>Flexible Display</strong> - Show levels, sweep events, or runs independently</li>
+                <li>✅ <strong>Alert System</strong> - Sweep detection, run detection, and proximity alerts</li>
+                <li>✅ <strong>OFF BY DEFAULT</strong> - Enable via "Show Liquidity Levels" or "Mark Sweep Events"</li>
+            </ul>
+
+            <h4>Configuration:</h4>
+            <ul>
+                <li>Configurable swing lookback (5-50 bars, default 20)</li>
+                <li>Minimum wick requirements (ATR-based, default 0.5)</li>
+                <li>Equal High/Low threshold (0-1%, default 0.1%)</li>
+                <li>Volume spike requirement toggle</li>
+                <li>Max levels per side (2-12, default 6)</li>
+            </ul>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="whats-new-301">
+        <h2>🚀 What's New in v3.0.1</h2>
+        <div class="info-box">
+            <h3>PROXIMITY ALERT SYSTEM: Advance warning before price reaches zones</h3>
+            <ul>
+                <li>✅ <strong>Early Warning Alerts</strong> - When price approaches nearest OB zones</li>
+                <li>✅ <strong>Configurable Distance</strong> - 0.1-5.0% threshold (optimal: 0.5-2% by timeframe)</li>
+                <li>✅ <strong>Smart Quality Filters</strong> - Alert only for Strong/Elite blocks or Fresh zones</li>
+                <li>✅ <strong>Directional Approach</strong> - Only alerts when price moving toward zone (actionable)</li>
+                <li>✅ <strong>Anti-Spam Tracking</strong> - One alert per approach, resets when price exits</li>
+                <li>✅ <strong>Perfect for Prep</strong> - Get ready before price reaches reaction zones</li>
+                <li>✅ <strong>Separate Alerts</strong> - "Approaching Bull OB" (LONG prep) and "Approaching Bear OB" (SHORT prep)</li>
+            </ul>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="whats-new-30">
+        <h2>🚀 What's New in v3.0</h2>
+        <div class="info-box">
+            <h3>PERFORMANCE OPTIMIZATION: 30-50% faster execution</h3>
+            <ul>
+                <li>✅ <strong>Conditional Pre-computation</strong> - Scalper mode skips unused calculations (5 calls/bar saved)</li>
+                <li>✅ <strong>VP Early Exit</strong> - O(300) → O(20-50) average when samples collected</li>
+                <li>✅ <strong>Single-Pass Overlap</strong> - O(N²) → O(N) with deferred batch deletion</li>
+                <li>✅ <strong>Conditional UI Updates</strong> - Only on new bars or state changes</li>
+                <li>✅ <strong>Smart Sizing Fix (v2.4.2)</strong> - ICT-aligned zone anchoring (bull=LOW, bear=HIGH)</li>
+            </ul>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="upgrade">
+        <h2>⚠️ Important: Upgrade to v3.3.0</h2>
+        <div class="warning-box">
+            <p>If you're using an older version, <strong>update to v3.3.0</strong> for:</p>
+            <ul>
+                <li>🔴 <strong>NEW FEATURE:</strong> Power Row - Multi-TF auto-switching intrabar volume dominance</li>
+                <li>🟢 <strong>Liquidity Sweeps:</strong> ICT Liquidity Sweep Detection - BSL/SSL levels (v3.1.0)</li>
+                <li>🟢 <strong>Performance:</strong> 30-50% faster execution (v3.0 optimization)</li>
+                <li>🟢 <strong>Proximity Alerts:</strong> Advance warning system for approaching OB zones (v3.0.1)</li>
+                <li>🟢 <strong>Smart Sizing Fix:</strong> ICT-aligned zone anchoring (v2.4.2)</li>
+                <li>🟢 <strong>Advanced Controls:</strong> 30+ settings for complete customization (v2.4.1)</li>
+                <li>🟢 <strong>Critical Fixes:</strong> Historical detection bugs (ATR, MSB) from v2.0-2.2</li>
+                <li>🟢 <strong>VP Auto-Scaling:</strong> Prevents timeout errors on low timeframes (v2.4)</li>
+            </ul>
+            <p><strong>How to check your version:</strong> Look at the indicator title in chart - should say "v3.3.0"</p>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="quick-setup">
+        <h2>⚡ Quick Setup (60 Seconds)</h2>
+        
+        <h3>For Crypto Scalping (1m-15m):</h3>
+        <pre><code>1. Detection Method: Scalper
+2. Scalper Lookback: 10
+3. Auto-Adjust for Timeframe: ON
+4. Volume Profile Enhancement: ON (if Premium)
+5. Track Rejections: ON
+6. [OPTIONAL] Show Liquidity Levels: ON (NEW in v3.1)
+7. [OPTIONAL] Mark Sweep Events: ON (NEW in v3.1)</code></pre>
+
+        <h3>For Swing Trading (1H-4H):</h3>
+        <pre><code>1. Detection Method: Institutional
+2. Auto-Adjust for Timeframe: ON
+3. Displacement Filter: ON
+4. FVG Filter: ON
+5. MSB Filter: ON
+6. [OPTIONAL] Show Liquidity Levels: ON (NEW in v3.1)
+7. [OPTIONAL] Mark Sweep Events: ON (NEW in v3.1)</code></pre>
+    </section>
+
+    <hr>
+
+    <section id="how-to-trade">
+        <h2>🎯 How to Trade Order Blocks</h2>
+        
+        <h3>1. Identify Order Block</h3>
+        <pre><code>Bullish OB (Green):
+🔴 ← Last bearish candle
+  🟢🟢🟢 ← Strong move up
+  
+Bearish OB (Red):  
+🟢 ← Last bullish candle
+  🔴🔴🔴 ← Strong move down</code></pre>
+
+        <h3>2. Wait for Retest</h3>
+        <ul>
+            <li>Price must return to the order block zone</li>
+            <li>Look for rejection signals (wicks, volume)</li>
+            <li>Check dashboard for status: ACTIVE</li>
+        </ul>
+
+        <h3>3. Entry Confirmation</h3>
+        <ul>
+            <li>★ <strong>Elite blocks</strong> = Highest probability (VP confirmed)</li>
+            <li>◆ <strong>Strong blocks</strong> = Good probability</li>
+            <li>◇ <strong>Mid blocks</strong> = Medium probability</li>
+            <li>○ <strong>Weak blocks</strong> = Lower probability (avoid if possible)</li>
+        </ul>
+
+        <h3>4. Position Setup</h3>
+        <pre><code>LONG Entry (Bull OB):
+Entry: When price touches OB zone + shows rejection
+Stop Loss: Below OB zone (5-10 pips)
+Take Profit: Previous high or next resistance
+
+SHORT Entry (Bear OB):
+Entry: When price touches OB zone + shows rejection
+Stop Loss: Above OB zone (5-10 pips)
+Take Profit: Previous low or next support</code></pre>
+    </section>
+
+    <hr>
+
+    <section id="dashboard">
+        <h2>📊 Understanding the Dashboard</h2>
+        
+        <pre><code>ICT Order Block Pro - SCALPING [Scalper] 📊VP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Type    Volume   Dist%   Strength  Tests  Status   Vol
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BEAR ▼  1.2M    +0.5%   Elite★    2      TESTED   1.8x
+BULL ▲  850K    -1.2%   Strong◆   1      ACTIVE   1.5x</code></pre>
+
+        <h3>Columns Explained:</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Column</th>
+                    <th>Meaning</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Type</strong></td>
+                    <td>BULL ▲ (support) or BEAR ▼ (resistance)</td>
+                </tr>
+                <tr>
+                    <td><strong>Volume</strong></td>
+                    <td>Total volume on order block candle</td>
+                </tr>
+                <tr>
+                    <td><strong>Dist%</strong></td>
+                    <td>Distance from current price (+ above, - below)</td>
+                </tr>
+                <tr>
+                    <td><strong>Strength</strong></td>
+                    <td>Elite★ / Strong◆ / Mid◇ / Weak○</td>
+                </tr>
+                <tr>
+                    <td><strong>Tests</strong></td>
+                    <td>Number of times price has retested</td>
+                </tr>
+                <tr>
+                    <td><strong>Status</strong></td>
+                    <td>FRESH/ACTIVE/TESTED/REJECT</td>
+                </tr>
+                <tr>
+                    <td><strong>Vol</strong></td>
+                    <td>Relative volume (vs average)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Status Meanings:</h3>
+        <ul>
+            <li><strong>FRESH</strong> ⚪ = Never tested, waiting for first touch</li>
+            <li><strong>ACTIVE</strong> 🟡 = Price currently in the zone</li>
+            <li><strong>TESTED</strong> 🟠 = Previously tested, waiting for next retest</li>
+            <li><strong>REJECT</strong> 🟢 = Price bounced (potential trade signal!)</li>
+        </ul>
+    </section>
+
+    <hr>
+
+    <section id="settings">
+        <h2>⚙️ Settings Guide</h2>
+        
+        <h3>💧 Liquidity Sweeps (NEW in v3.1.0)</h3>
+        
+        <h4>Show Liquidity Levels</h4>
+        <ul>
+            <li>OFF by default</li>
+            <li>Shows horizontal dashed lines at swing highs (BSL) and lows (SSL)</li>
+            <li>Identifies where stop losses cluster (liquidity pools)</li>
+        </ul>
+
+        <h4>Mark Sweep Events</h4>
+        <ul>
+            <li>ON by default when liquidity features enabled</li>
+            <li>Highlights when price sweeps liquidity then reverses</li>
+            <li>Shows quality rating (Strong/Mid/Weak) on sweep labels</li>
+        </ul>
+
+        <h4>Mark Liquidity Runs</h4>
+        <ul>
+            <li>OFF by default</li>
+            <li>Also marks when price takes liquidity and CONTINUES (trend confirmation)</li>
+            <li>Distinguishes sweeps (reversals) from runs (continuations)</li>
+        </ul>
+
+        <h4>Highlight Equal Highs/Lows</h4>
+        <ul>
+            <li>ON by default</li>
+            <li>Marks clustered swing levels with stronger liquidity</li>
+            <li>Equal levels = more stops = stronger magnet for price</li>
+        </ul>
+
+        <div class="tip-box">
+            <h4>🎯 Trading Liquidity Sweeps:</h4>
+            <ol>
+                <li>Identify BSL (above price) or SSL (below price)</li>
+                <li>Watch for price to sweep the level (wick beyond, close back)</li>
+                <li>Look for Strong quality sweeps (best probability)</li>
+                <li>Check for OB confluence (sweep near existing order block = powerful)</li>
+                <li>Enter on reversal confirmation after sweep</li>
+                <li>Stop loss beyond the swept level</li>
+            </ol>
+        </div>
+
+        <h3>🔥 Premium Features (Requires TradingView Premium)</h3>
+        
+        <h4>📊 Volume Profile Enhancement</h4>
+        <ul>
+            <li>Turn ON if you have Premium subscription</li>
+            <li>Identifies institutional accumulation zones</li>
+            <li>Boosts order blocks to "Elite" status</li>
+            <li><strong>NEW in v2.4:</strong> Auto-scales lookback based on timeframe</li>
+        </ul>
+
+        <h4>VP Analysis Period (20-500, default 100)</h4>
+        <div class="info-box">
+            <p><strong>IMPORTANT:</strong> With Auto-Adjust ON, this acts as a <strong>maximum cap</strong></p>
+            <p>Script automatically reduces on lower timeframes:</p>
+            <ul>
+                <li>1m chart → 60 bars (or your setting, whichever is lower)</li>
+                <li>3m chart → 80 bars</li>
+                <li>5m chart → 100 bars</li>
+                <li>15m chart → 150 bars</li>
+                <li>1h chart → 200 bars</li>
+                <li>4h+ chart → 300 bars</li>
+            </ul>
+            <p><strong>Why?</strong> Prevents "script took too long" errors on fast timeframes</p>
+        </div>
+
+        <h3>⚙️ Mode</h3>
+        
+        <h4>Auto-Adjust for Timeframe</h4>
+        <ul>
+            <li>ON = Automatically optimizes for current chart timeframe</li>
+            <li>OFF = Use manual preset</li>
+        </ul>
+
+        <h4>Detection Method</h4>
+        <ul>
+            <li><strong>Institutional:</strong> Pivot-based + strict filters (fewer, higher quality)</li>
+            <li><strong>Scalper:</strong> ICT/SMC displacement-based (more signals, faster)</li>
+        </ul>
+
+        <h3>Detection</h3>
+        
+        <h4>Block Sizing</h4>
+        <ul>
+            <li><strong>Smart:</strong> ATR-adjusted (best for scalping)</li>
+            <li><strong>Body Only:</strong> Candle body only</li>
+            <li><strong>Full Range:</strong> Entire high-low range</li>
+        </ul>
+
+        <h3>Filters (Institutional Mode)</h3>
+        <ul>
+            <li><strong>Displacement Filter</strong> - Requires strong body candles (>1.3x average)</li>
+            <li><strong>Fair Value Gap Filter</strong> - Requires price imbalance (gap between candles)</li>
+            <li><strong>Structure Break Filter</strong> - Requires break of previous market structure</li>
+            <li><strong>Volume Confirmation</strong> - Requires above-average volume</li>
+        </ul>
+
+        <h3>Mean Reversion</h3>
+        
+        <h4>Track Rejections</h4>
+        <ul>
+            <li>Detects bounces off order blocks</li>
+            <li>Shows "↗ BOUNCE" or "↘ REJECT" in labels</li>
+            <li>Triggers rejection alerts</li>
+        </ul>
+
+        <h4>Alert Granularity (v2.4.1+)</h4>
+        <ul>
+            <li><strong>Alert on New OB:</strong> Alert when order blocks are detected</li>
+            <li><strong>Alert on Touch:</strong> Alert when price enters zones</li>
+            <li><strong>Alert on Rejection:</strong> Alert when price rejects from zones</li>
+            <li>Control each alert type independently</li>
+        </ul>
+
+        <h4>Proximity Alerts (NEW in v3.0.1)</h4>
+        <ul>
+            <li><strong>Enable Proximity Alerts:</strong> Get advance warning before price reaches OB zones</li>
+            <li><strong>Proximity Distance %:</strong> Alert when within this % of zone (0.1-5.0%, default 1.0%)</li>
+            <li><strong>Proximity: Only Strong/Elite:</strong> Filter to high-quality blocks only</li>
+            <li><strong>Proximity: Only Fresh (Untested):</strong> Alert only for zones with no prior retests</li>
+            <li><strong>Require Directional Approach:</strong> Bull OB alerts only when price falling, Bear OB only when rising</li>
+        </ul>
+    </section>
+
+    <hr>
+
+    <section id="advanced-settings">
+        <h2>⚙️ Advanced Settings (v2.4.1)</h2>
+        
+        <div class="info-box">
+            <p><strong>NEW:</strong> 30+ advanced parameters for complete control over signal quality vs frequency. All settings include tooltips explaining their impact.</p>
+        </div>
+
+        <h3>🎯 Displacement / Impulse Tuning</h3>
+        
+        <h4>Displacement ATR Body Mult (0.5-2.0, default 0.8)</h4>
+        <ul>
+            <li>Body size threshold: <code>body > atr × this multiplier</code></li>
+            <li><strong>Lower = more signals</strong> (e.g., 0.6 for busy markets)</li>
+            <li><strong>Higher = stricter quality</strong> (e.g., 1.0 for cleaner signals)</li>
+        </ul>
+
+        <h4>Displacement Body/Range Min (0.4-0.9, default 0.6)</h4>
+        <ul>
+            <li>Body dominance: <code>body/range > this threshold</code></li>
+            <li><strong>Lower = more signals</strong> (e.g., 0.5 includes more candles)</li>
+            <li><strong>Higher = cleaner candles</strong> (e.g., 0.7 for strong momentum only)</li>
+        </ul>
+
+        <h3>📐 MSB (Market Structure Break) Controls</h3>
+        
+        <h4>MSB Lookback Mode</h4>
+        <ul>
+            <li><strong>Auto (preset):</strong> Uses timeframe presets (5/10/15) - Default</li>
+            <li><strong>User override:</strong> Uses your MSB Lookback value below</li>
+        </ul>
+
+        <h3>📊 FVG (Fair Value Gap) Controls</h3>
+        
+        <h4>FVG Mode (default "Classic 3-candle")</h4>
+        <ul>
+            <li><strong>Classic 3-candle:</strong> Standard wick gap detection</li>
+            <li><strong>Strict (body gap):</strong> Requires body gap (more selective)</li>
+            <li><strong>Loose (wick gap):</strong> Allows partial gaps (more permissive)</li>
+            <li><strong>Off:</strong> Disables FVG filter</li>
+        </ul>
+
+        <h3>🔄 Mitigation Controls</h3>
+        
+        <h4>Mitigation Mode (default "Auto")</h4>
+        <ul>
+            <li><strong>Auto:</strong> Adapts to timeframe (Wick/Close/Mean)</li>
+            <li><strong>Wick:</strong> Requires wick penetration through zone</li>
+            <li><strong>Close:</strong> Requires close through zone</li>
+            <li><strong>Mean:</strong> Requires close past midpoint</li>
+        </ul>
+
+        <h3>💪 Strength Scoring Thresholds</h3>
+        
+        <h4>Volume Score Multiplier (1.0-3.0, default 1.5)</h4>
+        <ul>
+            <li>Volume threshold: <code>vol > avgVol × this</code></li>
+            <li><strong>Lower = more Strong/Elite ratings</strong></li>
+            <li><strong>Higher = stricter requirements</strong></li>
+        </ul>
+
+        <h3>⚡ Performance / Object Limits</h3>
+        
+        <h4>Render Mode (default "Gradient")</h4>
+        <ul>
+            <li><strong>Gradient:</strong> Full gradient visuals (~12-15 objects per block)</li>
+            <li><strong>Simple fill:</strong> Single fill box (~3-5 objects per block)</li>
+            <li><strong>Borders only:</strong> Just border lines (~2-3 objects per block)</li>
+            <li><strong>Use Simple/Borders if hitting TradingView's 500 box/line limits</strong></li>
+        </ul>
+
+        <div class="tip-box">
+            <h3>📌 When to Use Advanced Settings</h3>
+            
+            <h4>For More Signals (Aggressive):</h4>
+            <pre><code>- Lower dispAtrBodyMult to 0.6-0.7
+- Lower dispBodyToRangeMin to 0.5
+- Increase obScanWindow to 5-6
+- Set fvgMode to "Loose" or "Off"
+- Set msbLookbackMode to "User override" and lower msbLookback to 5-7</code></pre>
+
+            <h4>For Higher Quality (Conservative):</h4>
+            <pre><code>- Increase dispAtrBodyMult to 1.0-1.2
+- Increase dispBodyToRangeMin to 0.7
+- Set fvgMode to "Strict"
+- Increase msbLookback to 15-20
+- Increase volScoreMult and bodyScoreMult to 1.8-2.0
+- Set fvgMinGapAtr to 0.2-0.3</code></pre>
+
+            <h4>For Volatile/Noisy Assets:</h4>
+            <pre><code>- Increase minPenZonePct to 0.15-0.20
+- Increase minPenAtrPct to 0.08-0.10
+- Increase smartSizeAtrMult to 1.5-2.0
+- Set mitigationMode to "Close" or "Mean"</code></pre>
+
+            <h4>For Performance (Busy Charts):</h4>
+            <pre><code>- Set renderMode to "Simple fill" or "Borders only"
+- Set maxBlocks to "5" or "8"
+- Turn off showCornerAccents</code></pre>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="visual-indicators">
+        <h2>🎨 Visual Indicators</h2>
+        
+        <h3>Strength Symbols (Icons on Order Blocks):</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Icon</th>
+                    <th>Rating</th>
+                    <th>Scoring</th>
+                    <th>Best Use</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>★</strong></td>
+                    <td>Elite</td>
+                    <td>3-4 points</td>
+                    <td><strong>Highest probability</strong> - VP confirmed + multiple validations</td>
+                </tr>
+                <tr>
+                    <td><strong>◆</strong></td>
+                    <td>Strong</td>
+                    <td>2-3 points</td>
+                    <td><strong>High probability</strong> - Multiple confirmations</td>
+                </tr>
+                <tr>
+                    <td><strong>◇</strong></td>
+                    <td>Mid</td>
+                    <td>1 point</td>
+                    <td><strong>Medium probability</strong> - Some confirmation</td>
+                </tr>
+                <tr>
+                    <td><strong>○</strong></td>
+                    <td>Weak</td>
+                    <td>0 points</td>
+                    <td><strong>Low probability</strong> - Basic detection only</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Scoring System (Configurable):</h3>
+        <ul>
+            <li>+1 point: Volume > avgVol × <code>volScoreMult</code> (default 1.5×)</li>
+            <li>+1 point: Body size > avgBody × <code>bodyScoreMult</code> (default 1.5×)</li>
+            <li>+1 point: Trend aligned (price above/below SMA50)</li>
+            <li>+0-2 points: Volume Profile concentration (Premium, configurable <code>vpScoreBoost</code>)</li>
+        </ul>
+        
+        <div class="info-box">
+            <p><strong>Elite Rating:</strong> Can be configured to require VP confirmation (<code>eliteRequiresVP</code> = true) or allow Elite rating with 3+ base points without VP (false).</p>
+        </div>
+
+        <div class="highlight-box">
+            <p><strong>Trading Tip:</strong> Focus on ★ Elite and ◆ Strong blocks for best results!</p>
+        </div>
+
+        <h3>Status Messages:</h3>
+        <ul>
+            <li><strong>● ACTIVE</strong> = Price in zone now</li>
+            <li><strong>↗ BOUNCE</strong> = Bullish rejection detected (support held)</li>
+            <li><strong>↘ REJECT</strong> = Bearish rejection detected (resistance held)</li>
+            <li><strong>N× TEST</strong> = Retested N times (e.g., "2× TEST" = 2 retests)</li>
+        </ul>
+
+        <h3>Visual Elements:</h3>
+        <ul>
+            <li><strong>Corner boxes</strong> = Only appear on Strong/Elite blocks for emphasis</li>
+            <li><strong>Gradient fill</strong> = Edge-to-center transparency shows strength</li>
+            <li><strong>Dotted lines</strong> = Top and bottom boundaries of order block</li>
+        </ul>
+
+        <h3>Colors:</h3>
+        <ul>
+            <li>🟢 <strong>Green (#00ff88)</strong> = Bullish order blocks (support)</li>
+            <li>🔴 <strong>Red (#ff3366)</strong> = Bearish order blocks (resistance)</li>
+            <li>🟡 <strong>Yellow</strong> = Elite strength in dashboard</li>
+            <li>🟠 <strong>Orange</strong> = Mid strength</li>
+            <li>⚪ <strong>White</strong> = Fresh/untested</li>
+        </ul>
+    </section>
+
+    <hr>
+
+    <section id="alerts">
+        <h2>🚨 Alert Setup</h2>
+        
+        <h3>Available Alerts:</h3>
+        
+        <h4>Order Block Alerts:</h4>
+        <ol>
+            <li><strong>New Bullish Order Block</strong> - New support zone detected</li>
+            <li><strong>New Bearish Order Block</strong> - New resistance zone detected</li>
+            <li><strong>Price in Bull Zone</strong> - Price testing support</li>
+            <li><strong>Price in Bear Zone</strong> - Price testing resistance</li>
+            <li><strong>Bull Zone Rejection</strong> 🚀 - Potential LONG signal</li>
+            <li><strong>Bear Zone Rejection</strong> 💥 - Potential SHORT signal</li>
+        </ol>
+
+        <h4>Proximity Alerts (NEW in v3.0.1):</h4>
+        <ol start="7">
+            <li><strong>Approaching Bull OB</strong> ⚠️ - Price nearing bullish zone (prepare LONG setup)</li>
+            <li><strong>Approaching Bear OB</strong> ⚠️ - Price nearing bearish zone (prepare SHORT setup)</li>
+        </ol>
+
+        <h4>Liquidity Sweep Alerts (NEW in v3.1.0):</h4>
+        <ol start="9">
+            <li><strong>Bullish Liquidity Sweep</strong> - SSL taken, potential LONG (reversal)</li>
+            <li><strong>Bearish Liquidity Sweep</strong> - BSL taken, potential SHORT (reversal)</li>
+            <li><strong>Bullish Liquidity Run</strong> - SSL broken, trend continuation DOWN</li>
+            <li><strong>Bearish Liquidity Run</strong> - BSL broken, trend continuation UP</li>
+            <li><strong>Approaching BSL</strong> - Price nearing buy-side liquidity</li>
+            <li><strong>Approaching SSL</strong> - Price nearing sell-side liquidity</li>
+        </ol>
+
+        <h3>How to Set Alerts:</h3>
+        <ol>
+            <li>Click "Alert" button (top right of chart)</li>
+            <li>Condition: Select indicator name</li>
+            <li>Choose alert type (e.g., "Bull Zone Rejection")</li>
+            <li>Configure notification method</li>
+            <li>Create alert</li>
+        </ol>
+    </section>
+
+    <hr>
+
+    <section id="pro-tips">
+        <h2>💡 Pro Tips</h2>
+        
+        <h3>Best Practices:</h3>
+        <div class="highlight-box">
+            <ul>
+                <li>✅ <strong>Use v3.1.0 for best performance</strong> (Liquidity sweeps + proximity alerts + all optimizations)</li>
+                <li>✅ <strong>Start with defaults</strong> (proven settings, liquidity features OFF initially)</li>
+                <li>✅ <strong>Enable Auto-Adjust</strong> (optimizes settings for your timeframe)</li>
+                <li>✅ <strong>Use higher timeframes</strong> (4H, Daily) for more reliable signals</li>
+                <li>✅ <strong>Wait for Elite★ or Strong◆ blocks</strong> for best probability</li>
+                <li>✅ <strong>Combine with market structure</strong> (trend direction)</li>
+                <li>✅ <strong>Look for rejection confirmation</strong> before entry</li>
+                <li>✅ <strong>Use proper risk management</strong> (1-2% per trade)</li>
+                <li>✅ <strong>Enable Volume Profile</strong> (Premium) for Elite★ blocks</li>
+                <li>✅ <strong>Trust the MSB filter</strong> (correctly detects structure breaks since v2.2)</li>
+                <li>✅ <strong>Experiment with Advanced Settings</strong> gradually (one at a time)</li>
+                <li>✅ <strong>NEW: Watch for liquidity sweeps</strong> near order blocks (confluence = powerful)</li>
+                <li>✅ <strong>NEW: Use proximity alerts</strong> to prepare trades before price arrives</li>
+            </ul>
+        </div>
+
+        <h3>What to Avoid:</h3>
+        <div class="warning-box">
+            <ul>
+                <li>❌ Trading every order block (be selective)</li>
+                <li>❌ Ignoring volume (low volume = weaker)</li>
+                <li>❌ Going against strong trends</li>
+                <li>❌ Using only lower timeframes (1m-5m)</li>
+                <li>❌ Not using stop losses</li>
+                <li>❌ Overtrading weak○ blocks</li>
+            </ul>
+        </div>
+
+        <h3>Optimal Timeframes:</h3>
+        <ul>
+            <li><strong>1m-5m:</strong> Scalping (fast trades, lower probability)</li>
+            <li><strong>15m-1H:</strong> Day trading (balanced)</li>
+            <li><strong>4H-Daily:</strong> Swing trading (highest probability)</li>
+            <li><strong>Weekly+:</strong> Position trading (very high quality)</li>
+        </ul>
+
+        <h3>Best Markets:</h3>
+        <ul>
+            <li>✅ <strong>Crypto:</strong> 24/7, high volatility, clear order blocks</li>
+            <li>✅ <strong>Forex Major Pairs:</strong> High liquidity, clean price action</li>
+            <li>✅ <strong>Stock Indices:</strong> ES, NQ, YM (futures)</li>
+            <li>⚠️ <strong>Low Volume Stocks:</strong> Less reliable</li>
+        </ul>
+    </section>
+
+    <hr>
+
+    <section id="troubleshooting">
+        <h2>🔧 Troubleshooting</h2>
+        
+        <h3>Liquidity levels not showing:</h3>
+        <ul>
+            <li>Enable "Show Liquidity Levels" in Liquidity Sweeps section</li>
+            <li>Or enable "Mark Sweep Events" to see sweeps without levels</li>
+            <li>Ensure chart has enough history (need swing highs/lows)</li>
+            <li>Adjust "Swing Lookback" (try 15-30 bars)</li>
+            <li>Lower "Equal High/Low Threshold" to 0.05% for more levels</li>
+        </ul>
+
+        <h3>Too many liquidity levels:</h3>
+        <ul>
+            <li>Increase "Swing Lookback" to 30-40 (fewer, stronger swings)</li>
+            <li>Reduce "Max Levels per Side" to 3-4</li>
+            <li>Increase "Equal High/Low Threshold" to 0.2-0.3%</li>
+        </ul>
+
+        <h3>No order blocks appearing:</h3>
+        <ul>
+            <li>Check Detection Method is selected</li>
+            <li>Lower Scalper Lookback value</li>
+            <li>Disable some filters (FVG, MSB)</li>
+            <li><strong>NEW in v2.4.1:</strong> Lower <code>dispAtrBodyMult</code> to 0.6-0.7</li>
+            <li><strong>NEW in v2.4.1:</strong> Set <code>fvgMode</code> to "Loose" or "Off"</li>
+            <li>Market may be ranging (not displacing)</li>
+        </ul>
+
+        <h3>Too many order blocks:</h3>
+        <ul>
+            <li>Use Institutional mode (stricter)</li>
+            <li>Enable all filters</li>
+            <li>Increase VP Strength Multiplier</li>
+            <li><strong>NEW in v2.4.1:</strong> Increase <code>dispAtrBodyMult</code> to 1.0+</li>
+            <li>Focus on higher timeframes</li>
+        </ul>
+
+        <h3>Elite★ blocks not showing:</h3>
+        <ul>
+            <li>Requires Volume Profile Enhancement = ON</li>
+            <li>Requires TradingView Premium subscription</li>
+            <li>Increase VP Analysis Period</li>
+            <li>Lower VP Strength Multiplier</li>
+        </ul>
+
+        <h3>"Script took too long to execute" error:</h3>
+        <ul>
+            <li><strong>FIXED in v2.4!</strong> VP auto-scaling for low timeframes</li>
+            <li>Ensure Auto-Adjust for Timeframe = ON</li>
+            <li>Script automatically reduces VP lookback on 1m/3m/5m</li>
+            <li>If still occurring, manually lower VP Analysis Period</li>
+        </ul>
+
+        <h3>Charts hitting TradingView object limits (500 boxes/lines):</h3>
+        <ul>
+            <li><strong>NEW in v2.4.1:</strong> Set <code>renderMode</code> to "Simple fill" or "Borders only"</li>
+            <li>Reduces objects per block from ~15 to ~3-5 (Simple) or ~2-3 (Borders)</li>
+            <li>Set <code>maxBlocks</code> to lower value (e.g., "5" or "8")</li>
+            <li>Turn off <code>showCornerAccents</code> for additional savings</li>
+        </ul>
+    </section>
+
+    <hr>
+
+    <section id="example-trade">
+        <h2>📈 Example Trade Setup</h2>
+        
+        <div class="highlight-box">
+            <h3>BTCUSDT 5m Chart - Bull Order Block</h3>
+            <pre><code>1. Scalper mode detects Bull OB at $42,500
+   - Last bearish candle before 200 pip move up
+   - Strength: Elite★ (VP confirmed)
+   - Volume: 2.1x average
+
+2. Price moves to $43,000, then retraces
+
+3. Price touches $42,500 zone
+   - Dashboard shows: ACTIVE
+   - Long wick forms (rejection)
+   - Volume spike on rejection candle
+
+4. Entry: $42,520 (above OB)
+   Stop Loss: $42,450 (below OB)
+   Take Profit: $43,000 (previous high)
+   
+5. Risk: 70 pips | Reward: 480 pips | R:R = 1:6.9
+
+6. Result: Price bounces, hits TP ✅</code></pre>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="liquidity-deep-dive">
+        <h2>📖 New Feature Deep Dive: Liquidity Sweeps (v3.1.0)</h2>
+        
+        <h3>What are Liquidity Sweeps?</h3>
+        <p>Liquidity sweeps are a key ICT/SMC concept where price:</p>
+        <ol>
+            <li>Moves beyond a swing high (BSL) or swing low (SSL)</li>
+            <li>Grabs stop losses clustered at those levels</li>
+            <li>Reverses direction (sweep) or continues (run)</li>
+        </ol>
+
+        <div class="info-box">
+            <h4>Why they matter:</h4>
+            <ul>
+                <li>Institutions intentionally sweep liquidity before major moves</li>
+                <li>Sweeps near order blocks = high-probability reversal setups</li>
+                <li>Equal highs/lows = clustered stops = stronger magnet for price</li>
+            </ul>
+        </div>
+
+        <h3>How to Use:</h3>
+        
+        <h4>Step 1: Enable Features</h4>
+        <pre><code>Liquidity Sweeps section:
+- Show Liquidity Levels: ON (to see BSL/SSL lines)
+- Mark Sweep Events: ON (to highlight sweeps)
+- Highlight Equal Highs/Lows: ON (to see clusters)</code></pre>
+
+        <h4>Step 2: Identify Liquidity Pools</h4>
+        <ul>
+            <li>BSL (dashed cyan lines above price) = Buy-Side Liquidity</li>
+            <li>SSL (dashed orange lines below price) = Sell-Side Liquidity</li>
+            <li>"EQ" prefix = Equal highs/lows (stronger)</li>
+        </ul>
+
+        <h4>Step 3: Watch for Sweeps</h4>
+        <ul>
+            <li>Price wicks beyond level then closes back</li>
+            <li>Sweep box appears with quality label (Strong/Mid/Weak)</li>
+            <li>Look for "Strong" quality (large wick + volume + OB confluence)</li>
+        </ul>
+
+        <h4>Step 4: Trade the Reversal</h4>
+        <pre><code>Bullish Sweep (SSL taken):
+- Price wicks below SSL
+- Closes back above
+- Strong quality preferred
+- Check for nearby Bull OB (confluence!)
+- Enter LONG on confirmation
+- Stop below swept low
+
+Bearish Sweep (BSL taken):
+- Price wicks above BSL
+- Closes back below
+- Strong quality preferred
+- Check for nearby Bear OB (confluence!)
+- Enter SHORT on confirmation
+- Stop above swept high</code></pre>
+
+        <h3>Quality Ratings Explained:</h3>
+        
+        <h4>Strong (Best):</h4>
+        <ul>
+            <li>Large wick (>1.0 ATR beyond level)</li>
+            <li>Volume spike confirmed</li>
+            <li>Near order block (confluence)</li>
+            <li>Equal high/low (clustered stops)</li>
+        </ul>
+
+        <h4>Mid (Good):</h4>
+        <ul>
+            <li>2-3 of the above criteria met</li>
+            <li>Still tradeable with confirmation</li>
+        </ul>
+
+        <h4>Weak (Caution):</h4>
+        <ul>
+            <li>Only 1 criterion met</li>
+            <li>Wait for additional confirmation</li>
+        </ul>
+
+        <h3>Sweep vs Run:</h3>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>Trading Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Sweep (Reversal)</strong></td>
+                    <td>Wick beyond level, close back inside</td>
+                    <td>Trade AGAINST the sweep direction</td>
+                </tr>
+                <tr>
+                    <td><strong>Run (Continuation)</strong></td>
+                    <td>Break and close beyond level</td>
+                    <td>Trade WITH the break direction</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Best Practices:</h3>
+        <div class="highlight-box">
+            <ul>
+                <li>✅ Focus on <strong>Strong quality</strong> sweeps</li>
+                <li>✅ Look for sweeps <strong>near order blocks</strong> (confluence)</li>
+                <li>✅ Prioritize <strong>equal highs/lows</strong> (EQ BSL/SSL)</li>
+                <li>✅ Wait for <strong>reversal confirmation</strong> after sweep</li>
+                <li>✅ Use <strong>proximity alerts</strong> for BSL/SSL levels</li>
+                <li>✅ Combine with <strong>higher timeframe</strong> structure</li>
+                <li>✅ Set stops <strong>beyond the swept level</strong></li>
+            </ul>
+        </div>
+
+        <h3>Example Setup:</h3>
+        <div class="highlight-box">
+            <pre><code>BTCUSDT 15m Chart
+
+1. SSL identified at $42,000 (equal lows)
+2. Alert: "Approaching SSL" triggers
+3. Price drops to $41,950 (sweeps SSL)
+4. Large wick, volume spike, closes at $42,020
+5. Quality: "Strong" (all criteria met)
+6. Nearby Bull OB at $42,000 (confluence!)
+7. Enter LONG at $42,030
+8. Stop at $41,930 (below swept low)
+9. Target: $42,500 (next resistance)
+10. R:R = 1:4.7 ✅</code></pre>
+        </div>
+    </section>
+
+    <hr>
+
+    <section id="power-feature">
+        <h2>📖 New Feature Deep Dive: Power Row (v3.3.0)</h2>
+        
+        <h3>What is the Power Row?</h3>
+        <p>The Power row shows real-time BUY/SELL pressure by analyzing intrabar volume from a lower timeframe. It helps you understand the dominant force in the current bar - are buyers or sellers in control?</p>
+
+        <div class="info-box">
+            <h4>Why it matters:</h4>
+            <ul>
+                <li>Confirms order block touches with volume direction</li>
+                <li>Identifies momentum shifts before price moves</li>
+                <li>Adds confluence to liquidity sweep entries</li>
+                <li>Filters weak signals during neutral periods</li>
+            </ul>
+        </div>
+
+        <h3>How to Use:</h3>
+        
+        <h4>Step 1: Enable Power Row</h4>
+        <pre><code>📊 Power (Intrabar) section:
+- Show Power Row: ON (default)
+- Power Mode: Auto (recommended)</code></pre>
+
+        <h4>Step 2: Understand the Display</h4>
+        <pre><code>Dashboard shows:
+─── POWER @5m ───
+Power    BUY    72.3%    15 bars
+
+Columns:
+- @5m = Using 5-minute intrabars
+- BUY/SELL/NEUTRAL = Dominant direction
+- 72.3% = How dominant (0-100%)
+- 15 bars = Number of intrabars analyzed</code></pre>
+
+        <h4>Step 3: Trading with Power</h4>
+        <ul>
+            <li><strong>Bull OB + Power BUY:</strong> Strong confluence for LONG (buyers dominating current bar)</li>
+            <li><strong>Bear OB + Power SELL:</strong> Strong confluence for SHORT (sellers dominating current bar)</li>
+            <li><strong>Power NEUTRAL:</strong> Low dominance, wait for clearer signal or directional shift</li>
+            <li><strong>Power flips to your direction:</strong> Momentum shifting favorably (after flip confirmation)</li>
+            <li><strong>Low confidence (grey/—):</strong> Too few intrabars or zero volume, wait for more data</li>
+        </ul>
+
+        <h3>Stability Features Explained:</h3>
+        
+        <h4>Neutral Band (Default 10%)</h4>
+        <ul>
+            <li>If dominance is below this threshold, shows NEUTRAL instead of weak BUY/SELL</li>
+            <li>Default 10% = neutral when either side has less than 10% dominance over the other</li>
+            <li>Prevents noisy signals during consolidation or balanced pressure</li>
+            <li>Increase to 15-20% for more conservative readings (more NEUTRAL zones)</li>
+            <li>Decrease to 5% for more aggressive readings (fewer NEUTRAL zones)</li>
+            <li>Setting: <code>powerNeutralBandPct</code> (0-30%, step 1.0)</li>
+        </ul>
+
+        <h4>Flip Confirmation (Auto-scaled, Default 0=Auto)</h4>
+        <ul>
+            <li>Requires N consecutive intrabars supporting new direction before switching displayed side</li>
+            <li>Auto mode (0): 2 bars (≤15m) → 3 bars (1h) → 4 bars (4h) → 5 bars (daily+)</li>
+            <li>Prevents rapid whipsaw flipping (BUY→SELL→BUY) during choppy periods</li>
+            <li>Set to 0 for automatic, or 1-10 for manual fixed confirmation count</li>
+            <li>NEUTRAL has no confirmation delay (de-escalates immediately)</li>
+            <li>Setting: <code>powerFlipConfirmBars</code> (0-10, step 1)</li>
+        </ul>
+
+        <h4>Smoothing (Auto-scaled in Auto mode)</h4>
+        <ul>
+            <li>EMA/SMA smoothing applied to dominance percentage for display stability</li>
+            <li>Auto mode: 6 bars (≤15m) → 10 bars (1h) → 14 bars (4h) → 18 bars (daily+)</li>
+            <li>Manual mode: uses your <code>powerSmoothingLen</code> setting (1-30, default 8)</li>
+            <li>Type: <code>powerSmoothingType</code> = "EMA" (faster reaction) or "SMA" (more stable)</li>
+            <li>Higher smoothing = smoother curve but slightly slower to react</li>
+            <li>Lower smoothing = faster reaction but more noise</li>
+        </ul>
+
+        <h3>Auto LTF Selection (Power Mode: Auto):</h3>
+        <table>
+            <thead>
+                <tr><th>Your Chart TF</th><th>Intrabar LTF</th><th>Why This Selection</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>≤ 5m</td><td>1m</td><td>Maximum granularity for scalping, captures tick-level pressure</td></tr>
+                <tr><td>≤ 15m</td><td>1m</td><td>Detailed intrabar resolution for day trading setups</td></tr>
+                <tr><td>≤ 1h</td><td>5m</td><td>Balanced resolution for intraday without excessive noise</td></tr>
+                <tr><td>≤ 4h</td><td>15m</td><td>Sufficient detail for swing trade entries</td></tr>
+                <tr><td>≤ 1D</td><td>1h</td><td>Hourly context provides session-based dominance for daily bars</td></tr>
+                <tr><td>Weekly+</td><td>4h</td><td>Session-level analysis for position trading context</td></tr>
+            </tbody>
+        </table>
+        
+        <div class="info-box">
+            <p><strong>Safety Note:</strong> Auto mode NEVER requests a timeframe higher than your chart TF. If LTF ≥ chart TF, falls back to chart TF itself or 1m (whichever is valid).</p>
+        </div>
+
+        <h3>Best Practices:</h3>
+        <div class="highlight-box">
+            <ul>
+                <li>✅ Use <strong>Auto mode</strong> for most situations</li>
+                <li>✅ Combine Power with order block/liquidity signals</li>
+                <li>✅ Wait for Power to confirm before entry</li>
+                <li>✅ Increase Neutral Band in choppy markets</li>
+                <li>✅ Check for sufficient intrabars (at least 4+)</li>
+                <li>✅ Power BUY at Bull OB = high probability LONG</li>
+                <li>✅ Power SELL at Bear OB = high probability SHORT</li>
+            </ul>
+        </div>
+
+        <h3>Example Setup:</h3>
+        <div class="highlight-box">
+            <pre><code>BTCUSDT 15m Chart
+
+1. Bull OB identified at $42,500 (Elite★)
+2. Price retraces to OB zone
+3. Dashboard shows: Power @1m | BUY | 68% | 12 bars
+4. Confluence: Elite OB + Power BUY + volume spike
+5. Enter LONG at $42,520
+6. Stop at $42,450 (below OB)
+7. Target: $43,000
+8. Result: Power confirmed buyer dominance ✅</code></pre>
+        </div>
+
+        <h3>Troubleshooting Power:</h3>
+        <ul>
+            <li><strong>Power shows "—" or grey:</strong> Low confidence (< min intrabars or zero volume). Check <code>powerMinIntrabars</code> setting (default 4).</li>
+            <li><strong>Always NEUTRAL:</strong> Dominance below neutral band. Lower <code>powerNeutralBandPct</code> to 5%, or increase chart TF for stronger directional moves.</li>
+            <li><strong>Too much flipping:</strong> Increase <code>powerFlipConfirmBars</code> (e.g., 3-5) or raise <code>powerNeutralBandPct</code> to 15-20%.</li>
+            <li><strong>Wrong LTF selected (Auto):</strong> Switch to Manual mode (<code>powerMode</code>) and set <code>powerLtf</code> to preferred timeframe (e.g., "5" for 5m).</li>
+            <li><strong>Too noisy/jumpy:</strong> Increase smoothing (<code>powerSmoothingLen</code> to 12-15 in Manual mode), or use SMA instead of EMA.</li>
+            <li><strong>Too slow to react:</strong> Decrease smoothing (to 5-6 in Manual mode), or use EMA instead of SMA.</li>
+            <li><strong>Doji candles causing issues:</strong> Adjust <code>powerTieBreak</code>: "Carry last direction" (default) is most stable, "Ignore dojis" is strictest.</li>
+        </ul>
+    </section>
+
+    <hr>
+
+    <section id="resources">
+        <h2>📚 Learn More</h2>
+        <ul>
+            <li><strong>Full Documentation:</strong> <code>ORDER_BLOCK_FORMULA_DOCUMENTATION.md</code></li>
+            <li><strong>Version History:</strong> <code>CHANGELOG.md</code></li>
+            <li><strong>ICT Concepts:</strong> YouTube - "Inner Circle Trader"</li>
+            <li><strong>SMC Trading:</strong> Search "Smart Money Concepts"</li>
+        </ul>
+    </section>
+
+    <hr>
+
+    <section id="disclaimer">
+        <h2>⚠️ Risk Disclaimer</h2>
+        <div class="warning-box">
+            <ul>
+                <li>This indicator is for educational purposes only</li>
+                <li>No indicator is 100% accurate</li>
+                <li>Always use proper risk management</li>
+                <li>Never risk more than you can afford to lose</li>
+                <li>Backtest thoroughly before live trading</li>
+                <li>Past performance doesn't guarantee future results</li>
+            </ul>
+        </div>
+    </section>
+
+    <hr>
+
+    <footer style="text-align: center; padding: 40px 0; color: var(--text-secondary);">
+        <p><strong>Version:</strong> 3.3.0</p>
+        <p><strong>Last Updated:</strong> January 18, 2026</p>
+        <p><strong>Mode:</strong> ICT/SMC Edition with Power Row + Liquidity Sweeps</p>
+        <p style="font-size: 1.5em; margin-top: 20px;">Happy Trading! 🚀</p>
+    </footer>
+</body>
+</html>

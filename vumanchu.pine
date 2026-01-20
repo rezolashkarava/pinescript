@@ -1,0 +1,258 @@
+//@version=6
+indicator("VuManChu Mean Reversion Signals [Pagani]", overlay=true, scale=scale.right, max_labels_count=500)
+
+// Mean-reversion scalping (5m-oriented):
+// - Enter on volatility-band excursion + re-entry
+// - WaveTrend provides timing at extremes
+// - Filters remove dead/chop/trend regimes
+
+// === Inputs ===
+groupCore = "Core"
+groupMean = "Mean Reversion"
+groupSignal = "Signal"
+groupFilters = "Filters"
+groupHTF = "HTF Filter"
+groupDisplay = "Display"
+
+showSignals = input.bool(true, "Show BUY/SELL", group=groupDisplay)
+labelGapTicks = input.int(12, "Label Gap (ticks)", minval=1, maxval=500, group=groupDisplay)
+
+src = input.source(hlc3, "WaveTrend Source", group=groupCore)
+wtChannelLen = input.int(9, "WT Channel Length", minval=1, group=groupCore)
+wtAverageLen = input.int(12, "WT Average Length", minval=1, group=groupCore)
+wtMaLen = input.int(3, "WT Signal MA Length", minval=1, group=groupCore)
+
+signalStrictness = input.string("Auto", "WT Strictness", options=["Auto", "Level 1", "Level 2", "Level 3"], group=groupSignal)
+wtOb1 = input.int(53, "WT OB Level 1", group=groupSignal)
+wtOs1 = input.int(-53, "WT OS Level 1", group=groupSignal)
+wtOb2 = input.int(60, "WT OB Level 2", group=groupSignal)
+wtOs2 = input.int(-60, "WT OS Level 2", group=groupSignal)
+wtOb3 = input.int(100, "WT OB Level 3", group=groupSignal)
+wtOs3 = input.int(-75, "WT OS Level 3", group=groupSignal)
+
+cooldownMode = input.string("Auto", "Cooldown", options=["Auto", "Off", "Manual"], group=groupSignal)
+manualCooldownBars = input.int(10, "Manual Cooldown Bars", minval=1, group=groupSignal)
+
+meanType = input.string("VWAP", "Mean", options=["VWAP", "EMA"], group=groupMean)
+meanEmaLen = input.int(50, "Mean EMA Length", minval=1, group=groupMean)
+bandAtrLen = input.int(14, "Band ATR Length", minval=1, group=groupMean)
+bandAtrMult = input.float(1.0, "Band Width (ATR)", minval=0.2, step=0.1, group=groupMean)
+setupWindowBars = input.int(5, "Setup Window (bars)", minval=1, maxval=20, group=groupMean,
+     tooltip="Max bars after an excursion to wait for re-entry + WT cross confirmation.")
+requireReentry = input.bool(true, "Require band re-entry", group=groupMean,
+     tooltip="BUY: low below lower band AND close back above it. SELL: high above upper band AND close back below it.")
+requireCandleDir = input.bool(true, "Require candle direction", group=groupMean,
+     tooltip="BUY requires close>open; SELL requires close<open.")
+
+useAtrFilter = input.bool(true, "Require ATR above baseline", group=groupFilters)
+atrBaselineLen = input.int(100, "ATR Baseline Length", minval=10, group=groupFilters)
+atrMinMult = input.float(1.0, "ATR Min Multiplier", minval=0.5, step=0.05, group=groupFilters)
+
+useVolFilter = input.bool(true, "Require Volume above baseline", group=groupFilters)
+volBaselineLen = input.int(50, "Volume Baseline Length", minval=5, group=groupFilters)
+volMinMult = input.float(1.15, "Volume Min Multiplier", minval=0.5, step=0.05, group=groupFilters)
+
+useAdxFilter = input.bool(true, "Avoid strong trends (ADX)", group=groupFilters)
+dmiLen = input.int(14, "DMI Length", minval=1, group=groupFilters)
+adxSmoothing = input.int(14, "ADX Smoothing", minval=1, group=groupFilters)
+adxMax = input.float(22.0, "Max ADX", minval=5.0, step=0.5, group=groupFilters)
+
+useVwapSideFilter = input.bool(true, "Require mean-side alignment", group=groupFilters,
+     tooltip="BUY only below mean; SELL only above mean. Helps keep it pure mean reversion.")
+
+useHtfFilter = input.bool(false, "Enable HTF filter", group=groupHTF)
+htfMode = input.string("Auto", "HTF Mode", options=["Auto", "Manual"], group=groupHTF)
+htfManual = input.timeframe("60", "Manual HTF", group=groupHTF)
+autoHtfMultiplier = input.string("12x", "Auto HTF Multiplier", options=["4x", "12x"], group=groupHTF)
+htfFilterMode = input.string("Range (ADX)", "HTF Filter", options=["Range (ADX)", "Trend (EMA)"], group=groupHTF)
+
+htfAdxMax = input.float(25.0, "HTF Max ADX", minval=5.0, step=0.5, group=groupHTF)
+htfTrendLen = input.int(200, "HTF EMA Length", minval=1, group=groupHTF)
+
+// === Helpers ===
+waveTrend(float source, int channelLen, int averageLen, int signalLen) =>
+    float esa = ta.ema(source, channelLen)
+    float de = ta.ema(math.abs(source - esa), channelLen)
+    float ci = de != 0.0 ? (source - esa) / (0.015 * de) : 0.0
+    float wt1 = ta.ema(ci, averageLen)
+    float wt2 = ta.sma(wt1, signalLen)
+    [wt1, wt2]
+
+autoHtf() =>
+    int chartSec = timeframe.in_seconds()
+    int mult = autoHtfMultiplier == "4x" ? 4 : 12
+    string tf = timeframe.from_seconds(chartSec * mult)
+    int tfSec = timeframe.in_seconds(tf)
+    tfSec <= chartSec ? timeframe.from_seconds(chartSec * mult * 2) : tf
+
+confirmedSecurity(string tf, series float expr) =>
+    request.security(
+         syminfo.tickerid,
+         tf,
+         barstate.isrealtime ? expr[1] : expr,
+         gaps=barmerge.gaps_off,
+         lookahead=barmerge.lookahead_off,
+         ignore_invalid_symbol=true)
+
+// === Core calcs ===
+[wt1, wt2] = waveTrend(src, wtChannelLen, wtAverageLen, wtMaLen)
+
+int chartSec = timeframe.in_seconds()
+int ob = wtOb1
+int os = wtOs1
+
+if signalStrictness == "Level 3"
+    ob := wtOb3
+    os := wtOs3
+else if signalStrictness == "Level 2"
+    ob := wtOb2
+    os := wtOs2
+else if signalStrictness == "Level 1"
+    ob := wtOb1
+    os := wtOs1
+else
+    if chartSec <= 5 * 60
+        ob := wtOb2
+        os := wtOs2
+    else
+        ob := wtOb1
+        os := wtOs1
+
+float atr = ta.atr(bandAtrLen)
+float mean = meanType == "VWAP" ? ta.vwap(hlc3) : ta.ema(close, meanEmaLen)
+float upperBand = mean + atr * bandAtrMult
+float lowerBand = mean - atr * bandAtrMult
+
+// Mean reversion trigger: excursion + confirmation within a window
+bool buyCandleOk = not requireCandleDir or close > open
+bool sellCandleOk = not requireCandleDir or close < open
+
+bool buyCross = ta.crossover(wt1, wt2) and wt2 <= os
+bool sellCross = ta.crossunder(wt1, wt2) and wt2 >= ob
+
+bool buyExcursion = low < lowerBand and wt2 <= os
+bool sellExcursion = high > upperBand and wt2 >= ob
+
+var int buySetupBar = na
+var float buyLowerAtSetup = na
+var bool buyReentered = false
+var bool buyCrossed = false
+
+var int sellSetupBar = na
+var float sellUpperAtSetup = na
+var bool sellReentered = false
+var bool sellCrossed = false
+
+if buyExcursion
+    buySetupBar := bar_index
+    buyLowerAtSetup := lowerBand
+    buyReentered := not requireReentry
+    buyCrossed := false
+
+if sellExcursion
+    sellSetupBar := bar_index
+    sellUpperAtSetup := upperBand
+    sellReentered := not requireReentry
+    sellCrossed := false
+
+if not na(buySetupBar)
+    if bar_index - buySetupBar <= setupWindowBars
+        if requireReentry and not buyReentered
+            buyReentered := low < buyLowerAtSetup and close > buyLowerAtSetup
+        if buyCross and not buyCrossed
+            buyCrossed := true
+    else
+        buySetupBar := na
+        buyLowerAtSetup := na
+        buyReentered := false
+        buyCrossed := false
+
+if not na(sellSetupBar)
+    if bar_index - sellSetupBar <= setupWindowBars
+        if requireReentry and not sellReentered
+            sellReentered := high > sellUpperAtSetup and close < sellUpperAtSetup
+        if sellCross and not sellCrossed
+            sellCrossed := true
+    else
+        sellSetupBar := na
+        sellUpperAtSetup := na
+        sellReentered := false
+        sellCrossed := false
+
+bool buy = buyReentered and buyCrossed and buyCandleOk
+bool sell = sellReentered and sellCrossed and sellCandleOk
+
+// Pure mean reversion: keep BUY under mean and SELL over mean
+if useVwapSideFilter
+    buy := buy and close < mean
+    sell := sell and close > mean
+
+// Dead market filters
+if useAtrFilter
+    float atrBase = ta.sma(atr, atrBaselineLen)
+    bool atrOk = not na(atrBase) and atr > atrBase * atrMinMult
+    buy := buy and atrOk
+    sell := sell and atrOk
+
+if useVolFilter
+    float volBase = ta.sma(volume, volBaselineLen)
+    bool volOk = not na(volBase) and volume > volBase * volMinMult
+    buy := buy and volOk
+    sell := sell and volOk
+
+// Range filter: avoid strong trends
+if useAdxFilter
+    [plusDi, minusDi, adx] = ta.dmi(dmiLen, adxSmoothing)
+    bool adxOk = not na(adx) and adx <= adxMax
+    buy := buy and adxOk
+    sell := sell and adxOk
+
+// HTF filter
+if useHtfFilter
+    string tf = htfMode == "Auto" ? autoHtf() : htfManual
+
+    if htfFilterMode == "Range (ADX)"
+        [htfPlusDi, htfMinusDi, htfAdx] = ta.dmi(dmiLen, adxSmoothing)
+        float htfAdxConf = confirmedSecurity(tf, htfAdx)
+        bool htfOk = not na(htfAdxConf) and htfAdxConf <= htfAdxMax
+        buy := buy and htfOk
+        sell := sell and htfOk
+    else
+        float htfClose = confirmedSecurity(tf, close)
+        float htfEma = confirmedSecurity(tf, ta.ema(close, htfTrendLen))
+        bool htfBull = not na(htfClose) and not na(htfEma) and htfClose > htfEma
+        bool htfBear = not na(htfClose) and not na(htfEma) and htfClose < htfEma
+        buy := buy and htfBull
+        sell := sell and htfBear
+
+// Cooldown
+int cooldownBars = 0
+if cooldownMode == "Manual"
+    cooldownBars := manualCooldownBars
+else if cooldownMode == "Off"
+    cooldownBars := 0
+else
+    cooldownBars := chartSec <= 5 * 60 ? 3 : 2
+
+var int lastBuyBar = na
+var int lastSellBar = na
+bool buyAllowed = na(lastBuyBar) or bar_index - lastBuyBar >= cooldownBars
+bool sellAllowed = na(lastSellBar) or bar_index - lastSellBar >= cooldownBars
+
+bool buySignal = showSignals and barstate.isconfirmed and buy and buyAllowed
+bool sellSignal = showSignals and barstate.isconfirmed and sell and sellAllowed
+
+if buySignal
+    lastBuyBar := bar_index
+if sellSignal
+    lastSellBar := bar_index
+
+float labelGap = syminfo.mintick * labelGapTicks
+
+plotshape(buySignal ? low - labelGap : na, title="BUY", text="BUY", style=shape.labelup, location=location.absolute,
+     color=color.new(color.lime, 0), textcolor=color.white, size=size.small, force_overlay=true)
+plotshape(sellSignal ? high + labelGap : na, title="SELL", text="SELL", style=shape.labeldown, location=location.absolute,
+     color=color.new(color.red, 0), textcolor=color.white, size=size.small, force_overlay=true)
+
+alertcondition(buySignal, title="BUY", message="BUY")
+alertcondition(sellSignal, title="SELL", message="SELL")
