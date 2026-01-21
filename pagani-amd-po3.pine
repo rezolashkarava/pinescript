@@ -22,6 +22,11 @@ signalTimingInput = input.string("Confirmed (bar close)", "Signal Timing", optio
 atrLenInput = input.int(14, "ATR Length", minval=1, group=groupDet)
 regimeLenInput = input.int(100, "Regime Length", minval=10, group=groupDet)
 lowVolMultInput = input.float(0.75, "Low Vol Threshold (x ATR MA)", minval=0.1, maxval=2.0, step=0.05, group=groupDet)
+volRegimeModeInput = input.string("ATR/MA", "Volatility Regime Mode", options=["ATR/MA", "ATR %Rank"], group=groupDet,
+     tooltip="ATR/MA: low volatility when ATR < ATR moving average * threshold.\nATR %Rank: low volatility when ATR is in the lowest percentile of its own history (more robust across assets).")
+atrPctLookbackInput = input.int(200, "ATR %Rank Lookback", minval=20, maxval=5000, group=groupDet)
+lowVolPctThresholdInput = input.float(25.0, "Low Vol %Rank Threshold", minval=1.0, maxval=50.0, step=1.0, group=groupDet,
+     tooltip="Only used when Volatility Regime Mode = ATR %Rank.\nExample: 25 means ATR is in the lowest 25% of the last N bars.")
 
 rangeLenInput = input.int(30, "Range Lookback (bars)", minval=10, group=groupDet)
 rangeAtrMultInput = input.float(4.0, "Max Range (x ATR)", minval=0.5, maxval=20.0, step=0.1, group=groupDet,
@@ -32,10 +37,14 @@ minRangePctInput = input.float(0.03, "Min Range (% of price)", minval=0.0, maxva
 minAccBarsInput = input.int(12, "Min Accumulation Bars", minval=5, maxval=200, group=groupDet)
 
 requireCloseBackInput = input.bool(true, "Sweep Requires Close Back Inside", group=groupDet)
+sweepMinExcAtrInput = input.float(0.25, "Min Sweep Excursion (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupDet,
+     tooltip="Minimum distance price must run beyond the range boundary to count as a sweep.\nSet > 0 to avoid micro-wick noise on low timeframes.")
 maxBarsToSweepInput = input.int(120, "Max Bars To Sweep After Acc", minval=10, maxval=2000, group=groupDet)
 
 dispAtrMultInput = input.float(1.2, "Displacement (Body x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupDet)
 minBodyPctTrInput = input.float(0.55, "Displacement (Body / TR)", minval=0.1, maxval=1.0, step=0.05, group=groupDet)
+dispBarsInput = input.int(1, "Displacement Bars", minval=1, maxval=3, group=groupDet,
+     tooltip="Number of consecutive displacement candles required to start Distribution.\nHigher values reduce noise but will miss grindy moves.")
 requireFvgInput = input.bool(true, "Require FVG Confirmation", group=groupDet)
 fvgMinAtrInput = input.float(0.15, "Min FVG (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupDet)
 maxBarsToDistributeInput = input.int(240, "Max Bars To Distribute After Sweep", minval=10, maxval=5000, group=groupDet)
@@ -65,6 +74,9 @@ int atrLen = presetMode == "Aggressive" ? math.max(atrLenInput, 10) : atrLenInpu
 int regimeLen0 = presetMode == "Institutional (Strict)" ? math.max(regimeLenInput, 150) : presetMode == "Aggressive" ? math.max(regimeLenInput, 60) : regimeLenInput
 int regimeLen = tradingStyle == "Manual" ? regimeLen0 : tradingStyle == "Scalp" ? math.min(regimeLen0, 80) : tradingStyle == "Swing" ? math.max(regimeLen0, 200) : regimeLen0
 float lowVolMult = presetMode == "Institutional (Strict)" ? math.min(lowVolMultInput, 0.65) : presetMode == "Aggressive" ? math.max(lowVolMultInput, 0.85) : lowVolMultInput
+string volRegimeMode = volRegimeModeInput
+int atrPctLookback = presetMode == "Institutional (Strict)" ? math.max(atrPctLookbackInput, 300) : presetMode == "Aggressive" ? math.max(atrPctLookbackInput, 120) : atrPctLookbackInput
+float lowVolPctThreshold = presetMode == "Institutional (Strict)" ? math.min(lowVolPctThresholdInput, 20.0) : presetMode == "Aggressive" ? math.max(lowVolPctThresholdInput, 35.0) : lowVolPctThresholdInput
 
 int rangeLen0 = presetMode == "Institutional (Strict)" ? math.max(rangeLenInput, 40) : presetMode == "Aggressive" ? math.max(rangeLenInput, 20) : rangeLenInput
 int rangeLen = tradingStyle == "Manual" ? rangeLen0 : tradingStyle == "Scalp" ? math.min(rangeLen0, 25) : tradingStyle == "Swing" ? math.max(rangeLen0, 60) : rangeLen0
@@ -74,11 +86,13 @@ int minAccBars0 = presetMode == "Institutional (Strict)" ? math.max(minAccBarsIn
 int minAccBars = tradingStyle == "Manual" ? minAccBars0 : tradingStyle == "Scalp" ? math.min(minAccBars0, 10) : tradingStyle == "Swing" ? math.max(minAccBars0, 20) : minAccBars0
 
 bool requireCloseBack = presetMode == "Institutional (Strict)" ? true : requireCloseBackInput
+float sweepMinExcAtr = presetMode == "Institutional (Strict)" ? math.max(sweepMinExcAtrInput, 0.50) : presetMode == "Aggressive" ? math.max(sweepMinExcAtrInput, 0.15) : sweepMinExcAtrInput
 int maxBarsToSweep0 = presetMode == "Institutional (Strict)" ? math.min(maxBarsToSweepInput, 90) : presetMode == "Aggressive" ? math.max(maxBarsToSweepInput, 240) : maxBarsToSweepInput
 int maxBarsToSweep = tradingStyle == "Manual" ? maxBarsToSweep0 : tradingStyle == "Scalp" ? math.min(maxBarsToSweep0, 60) : tradingStyle == "Swing" ? math.max(maxBarsToSweep0, 400) : maxBarsToSweep0
 
 float dispAtrMult = presetMode == "Institutional (Strict)" ? math.max(dispAtrMultInput, 1.6) : presetMode == "Aggressive" ? math.max(dispAtrMultInput, 1.0) : dispAtrMultInput
 float minBodyPctTr = presetMode == "Institutional (Strict)" ? math.max(minBodyPctTrInput, 0.65) : presetMode == "Aggressive" ? math.max(minBodyPctTrInput, 0.45) : minBodyPctTrInput
+int dispBars = presetMode == "Institutional (Strict)" ? math.max(dispBarsInput, 2) : presetMode == "Aggressive" ? 1 : dispBarsInput
 bool requireFvg = presetMode == "Institutional (Strict)" ? true : requireFvgInput
 float fvgMinAtr = presetMode == "Institutional (Strict)" ? math.max(fvgMinAtrInput, 0.20) : presetMode == "Aggressive" ? math.max(fvgMinAtrInput, 0.05) : fvgMinAtrInput
 int maxBarsToDistribute0 = presetMode == "Institutional (Strict)" ? math.min(maxBarsToDistributeInput, 180) : presetMode == "Aggressive" ? math.max(maxBarsToDistributeInput, 360) : maxBarsToDistributeInput
@@ -108,13 +122,17 @@ float atr = ta.atr(atrLen)
 float atrMa = ta.sma(atr, regimeLen)
 float tr = ta.tr(true)
 
+float atrPctRank = ta.percentrank(atr, atrPctLookback)
+
 float rangeHighRoll = ta.highest(high, rangeLen)
 float rangeLowRoll = ta.lowest(low, rangeLen)
 float rangeWidthRoll = rangeHighRoll - rangeLowRoll
 float rangeMinFloor = close * (minRangePct / 100.0)
 float atrRef = na(atrMa) ? atr : atrMa
 float rangeMax = math.max(atrRef * rangeAtrMult, rangeMinFloor)
-bool lowVol = not na(atrMa) and atr < atrMa * lowVolMult
+bool lowVolAtrMa = not na(atrMa) and atr < atrMa * lowVolMult
+bool lowVolPct = not na(atrPctRank) and atrPctRank <= lowVolPctThreshold
+bool lowVol = volRegimeMode == "ATR %Rank" ? lowVolPct : lowVolAtrMa
 bool tightRange = rangeWidthRoll <= rangeMax
 
 bool accCond = lowVol and tightRange
@@ -238,10 +256,12 @@ if shouldUpdate
             else if allowManNow
                 bool sweptUp = high > rangeHigh
                 bool sweptDown = low < rangeLow
+                bool excUpOk = sweepMinExcAtr <= 0 ? true : (high - rangeHigh) >= sweepMinExcAtr * atrRef
+                bool excDownOk = sweepMinExcAtr <= 0 ? true : (rangeLow - low) >= sweepMinExcAtr * atrRef
                 bool closeBackUp = not requireCloseBack or close < rangeHigh
                 bool closeBackDown = not requireCloseBack or close > rangeLow
-                bool manUp = sweptUp and closeBackUp
-                bool manDown = sweptDown and closeBackDown
+                bool manUp = sweptUp and excUpOk and closeBackUp
+                bool manDown = sweptDown and excDownOk and closeBackDown
 
                 if manUp or manDown
                     phase := 3
@@ -270,15 +290,18 @@ if shouldUpdate
             else if allowDistNow
                 int expectedDir = -sweepDir
                 float body = math.abs(close - open)
-                bool disp = body >= dispAtrMult * atr and (tr > 0 ? (body / tr) : 0) >= minBodyPctTr
 
                 bool dirOk = expectedDir == 1 ? close > open : close < open
+                bool dispBar = body >= dispAtrMult * atr and (tr > 0 ? (body / tr) : 0) >= minBodyPctTr and dirOk
+                bool dispSeqOk = dispBars == 1 ? dispBar : dispBars == 2 ? (dispBar and dispBar[1]) : (dispBar and dispBar[1] and dispBar[2])
 
-                bool bullFvg = low > high[2] and (low - high[2]) >= fvgMinAtr * atr
-                bool bearFvg = high < low[2] and (low[2] - high) >= fvgMinAtr * atr
-                bool fvgOk = not requireFvg or (expectedDir == 1 ? bullFvg : bearFvg)
+                bool bullFvgNow = not na(high[2]) and low > high[2] and (low - high[2]) >= fvgMinAtr * atr
+                bool bearFvgNow = not na(low[2]) and high < low[2] and (low[2] - high) >= fvgMinAtr * atr
+                bool bullFvgSeq = dispBars == 1 ? bullFvgNow : dispBars == 2 ? (bullFvgNow or bullFvgNow[1]) : (bullFvgNow or bullFvgNow[1] or bullFvgNow[2])
+                bool bearFvgSeq = dispBars == 1 ? bearFvgNow : dispBars == 2 ? (bearFvgNow or bearFvgNow[1]) : (bearFvgNow or bearFvgNow[1] or bearFvgNow[2])
+                bool fvgOk = not requireFvg or (expectedDir == 1 ? bullFvgSeq : bearFvgSeq)
 
-                if disp and dirOk and fvgOk
+                if dispSeqOk and fvgOk
                     phase := 4
                     distBar := bar_index
                     evDistUp := expectedDir == 1
