@@ -140,9 +140,8 @@ bool accCond = lowVol and tightRange
 // === Phase state ===
 // 0: idle, 1: accumulation (building), 2: range locked (waiting sweep), 3: sweep confirmed (waiting distribution), 4: distribution
 var int phase = 0
-var int accStartTime = na
+var int accStartBar = na
 var int lockBar = na
-var int lockTime = na
 var int sweepBar = na
 var int distBar = na
 var float rangeHigh = na
@@ -187,9 +186,8 @@ if shouldUpdate
     if na(atr) or na(rangeHighRoll) or na(rangeLowRoll)
         f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
         phase := 0
-        accStartTime := na
+        accStartBar := na
         lockBar := na
-        lockTime := na
         sweepBar := na
         distBar := na
         rangeHigh := na
@@ -203,11 +201,10 @@ if shouldUpdate
         // Start accumulation once regime holds long enough.
         if phase == 0 and accStreak >= minAccBars
             phase := 1
-            accStartTime := time[minAccBars - 1]
+            accStartBar := bar_index - minAccBars + 1
             rangeHigh := ta.highest(high, minAccBars)
             rangeLow := ta.lowest(low, minAccBars)
             lockBar := na
-            lockTime := na
             sweepBar := na
             distBar := na
             sweepDir := 0
@@ -215,21 +212,20 @@ if shouldUpdate
                 box.delete(accBox)
             accBox := na
             if showAccBox
-                accBox := box.new(accStartTime, rangeHigh, time, rangeLow, xloc=xloc.bar_time, bgcolor=color.new(color.gray, 90), border_color=color.new(color.gray, 40), border_width=1)
+                accBox := box.new(accStartBar, rangeHigh, bar_index, rangeLow, xloc=xloc.bar_index, bgcolor=color.new(color.gray, 90), border_color=color.new(color.gray, 40), border_width=1)
 
         // While accumulating, keep expanding the range.
         if phase == 1
             rangeHigh := math.max(rangeHigh, high)
             rangeLow := math.min(rangeLow, low)
             if showAccBox and not na(accBox)
-                box.set_lefttop(accBox, accStartTime, rangeHigh)
-                box.set_rightbottom(accBox, time, rangeLow)
+                box.set_lefttop(accBox, accStartBar, rangeHigh)
+                box.set_rightbottom(accBox, bar_index, rangeLow)
 
             // Lock the range when the low-vol regime breaks.
             if not accCond
                 phase := 2
                 lockBar := bar_index
-                lockTime := time
                 evRangeLocked := true
 
                 if showRangeLines
@@ -237,8 +233,8 @@ if shouldUpdate
                         line.delete(rangeHighLine)
                     if not na(rangeLowLine)
                         line.delete(rangeLowLine)
-                    rangeHighLine := line.new(x1=lockTime, y1=rangeHigh, x2=time, y2=rangeHigh, xloc=xloc.bar_time, extend=extend.none, color=color.new(color.gray, 30), width=1)
-                    rangeLowLine := line.new(x1=lockTime, y1=rangeLow, x2=time, y2=rangeLow, xloc=xloc.bar_time, extend=extend.none, color=color.new(color.gray, 30), width=1)
+                    rangeHighLine := line.new(x1=lockBar, y1=rangeHigh, x2=bar_index, y2=rangeHigh, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
+                    rangeLowLine := line.new(x1=lockBar, y1=rangeLow, x2=bar_index, y2=rangeLow, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
 
         // Waiting for sweep.
         if phase == 2
@@ -246,9 +242,8 @@ if shouldUpdate
             if not timeOk
                 f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
                 phase := 0
-                accStartTime := na
+                accStartBar := na
                 lockBar := na
-                lockTime := na
                 sweepBar := na
                 distBar := na
                 rangeHigh := na
@@ -281,9 +276,8 @@ if shouldUpdate
             if not timeOk
                 f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
                 phase := 0
-                accStartTime := na
+                accStartBar := na
                 lockBar := na
-                lockTime := na
                 sweepBar := na
                 distBar := na
                 rangeHigh := na
@@ -317,9 +311,8 @@ if shouldUpdate
         if phase == 4 and accStreak >= minAccBars
             f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
             phase := 0
-            accStartTime := na
+            accStartBar := na
             lockBar := na
-            lockTime := na
             sweepBar := na
             distBar := na
             rangeHigh := na
@@ -330,14 +323,13 @@ if shouldUpdate
             rangeHighLine := na
             rangeLowLine := na
 
-    // Keep range lines attached to price axis and time axis.
-    // (Update both endpoints so auto-scaling and zooming behave consistently.)
-    if showRangeLines and not na(rangeHighLine) and not na(rangeHigh) and not na(lockTime)
-        line.set_xy1(rangeHighLine, lockTime, rangeHigh)
-        line.set_xy2(rangeHighLine, time, rangeHigh)
-    if showRangeLines and not na(rangeLowLine) and not na(rangeLow) and not na(lockTime)
-        line.set_xy1(rangeLowLine, lockTime, rangeLow)
-        line.set_xy2(rangeLowLine, time, rangeLow)
+    // Keep range lines attached to the locked bar and the latest bar.
+    if showRangeLines and not na(rangeHighLine) and not na(rangeHigh) and not na(lockBar)
+        line.set_xy1(rangeHighLine, lockBar, rangeHigh)
+        line.set_xy2(rangeHighLine, bar_index, rangeHigh)
+    if showRangeLines and not na(rangeLowLine) and not na(rangeLow) and not na(lockBar)
+        line.set_xy1(rangeLowLine, lockBar, rangeLow)
+        line.set_xy2(rangeLowLine, bar_index, rangeLow)
 
 // === Visuals ===
 plotshape(showMarkers and evSweepUp, title="M Sweep Up", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="M", textcolor=color.white)
