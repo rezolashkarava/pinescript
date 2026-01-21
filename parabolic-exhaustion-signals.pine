@@ -265,6 +265,8 @@ plotshape(shortSignal, title="SHORT", style=shape.triangledown, location=locatio
 if showLabels and longSignal
     label.new(bar_index, low, 
          text="LONG" + (showConditionCount ? "\n" + str.tostring(bullishScore) + "/" + str.tostring(minConditions) : ""), 
+         xloc=xloc.bar_index,
+         yloc=yloc.price,
          style=label.style_label_up, 
          color=color.new(#00ff88, 0), 
          textcolor=color.white,
@@ -273,6 +275,8 @@ if showLabels and longSignal
 if showLabels and shortSignal
     label.new(bar_index, high, 
          text="SHORT" + (showConditionCount ? "\n" + str.tostring(bearishScore) + "/" + str.tostring(minConditions) : ""), 
+         xloc=xloc.bar_index,
+         yloc=yloc.price,
          style=label.style_label_down, 
          color=color.new(#ff3366, 0), 
          textcolor=color.white,
@@ -282,7 +286,5 @@ if showLabels and shortSignal
 // ALERTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-alertcondition(longSignal, title="Parabolic Exhaustion LONG", 
-     message="LONG signal: {{ticker}} {{interval}} - Parabolic exhaustion reversal detected")
-alertcondition(shortSignal, title="Parabolic Exhaustion SHORT", 
-     message="SHORT signal: {{ticker}} {{interval}} - Parabolic exhaustion reversal detected")
+alertcondition(longSignal, title="Parabolic Exhaustion LONG", message="LONG signal: {{ticker}} {{interval}} - Parabolic exhaustion reversal detected")
+alertcondition(shortSignal, title="Parabolic Exhaustion SHORT", message="SHORT signal: {{ticker}} {{interval}} - Parabolic exhaustion reversal detected")
