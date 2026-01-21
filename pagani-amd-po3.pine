@@ -330,10 +330,13 @@ if shouldUpdate
             rangeHighLine := na
             rangeLowLine := na
 
-    // Keep range lines attached to the latest bar.
-    if showRangeLines and not na(rangeHighLine) and not na(rangeHigh)
+    // Keep range lines attached to price axis and time axis.
+    // (Update both endpoints so auto-scaling and zooming behave consistently.)
+    if showRangeLines and not na(rangeHighLine) and not na(rangeHigh) and not na(lockTime)
+        line.set_xy1(rangeHighLine, lockTime, rangeHigh)
         line.set_xy2(rangeHighLine, time, rangeHigh)
-    if showRangeLines and not na(rangeLowLine) and not na(rangeLow)
+    if showRangeLines and not na(rangeLowLine) and not na(rangeLow) and not na(lockTime)
+        line.set_xy1(rangeLowLine, lockTime, rangeLow)
         line.set_xy2(rangeLowLine, time, rangeLow)
 
 // === Visuals ===
