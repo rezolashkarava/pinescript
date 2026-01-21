@@ -5,6 +5,15 @@ indicator("Parabolic Exhaustion Signals", overlay=true, max_labels_count=100)
 // INPUTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+groupMode = "Mode"
+tradeMode = input.string("Auto (based on chart TF)", "Mode",
+     options=["Auto (based on chart TF)", "Intraday (5m-15m)", "Swing"],
+     group=groupMode,
+     tooltip="Auto: switches based on the chart timeframe\nIntraday: optimized for 5m-15m noise\nSwing: fewer signals; uses higher-timeframe filters and longer lookbacks")
+
+autoSwingFromTf = input.timeframe("60", "Auto: Swing From TF", group=groupMode,
+     tooltip="When Mode=Auto, chart timeframes at/above this switch to Swing")
+
 groupSettings = "Signal Settings"
 signalMode = input.string("Strict (4+ conditions)", "Signal Quality", 
      options=["Strict (4+ conditions)", "Balanced (3+ conditions)", "Aggressive (2+ conditions)"], 
@@ -20,6 +29,8 @@ rocExtremeThreshold = input.float(90.0, "Extreme Threshold (%)", minval=70.0, ma
 groupDiv = "Divergence Detection"
 rsiPeriod = input.int(14, "RSI Period", minval=5, maxval=50, group=groupDiv)
 divLookback = input.int(25, "Divergence Lookback", minval=10, maxval=50, group=groupDiv)
+pivotLeftBars = input.int(5, "Pivot Left Bars", minval=1, maxval=20, group=groupDiv)
+pivotRightBars = input.int(5, "Pivot Right Bars", minval=1, maxval=20, group=groupDiv)
 
 groupAC = "Acceleration Oscillator"
 acFast = input.int(5, "AO Fast Period", minval=3, maxval=20, group=groupAC)
@@ -36,6 +47,29 @@ showLabels = input.bool(true, "Show Signal Labels", group=groupVis)
 showConditionCount = input.bool(false, "Show Condition Count", group=groupVis,
      tooltip="Display how many conditions were met (for debugging)")
 
+groupFilters = "Filters"
+cooldownBars = input.int(5, "Signal Cooldown (bars)", minval=0, maxval=100, group=groupFilters,
+     tooltip="Prevents clusters of signals by enforcing a minimum bar gap")
+
+useRegimeFilter = input.bool(true, "Use Trend Regime Filter", group=groupFilters,
+     tooltip="Suppresses reversal signals during strong directional trends")
+swingFilterTf = input.timeframe("60", "Swing Filter Timeframe", group=groupFilters,
+     tooltip="Used for Swing mode filters (e.g., 60 = 1h, 240 = 4h)")
+trendEmaLen = input.int(200, "Trend EMA Length", minval=20, maxval=500, group=groupFilters)
+trendSlopeLookback = input.int(20, "Trend Slope Lookback", minval=5, maxval=200, group=groupFilters)
+atrLen = input.int(14, "ATR Length", minval=5, maxval=100, group=groupFilters)
+maxTrendSlopeAtr = input.float(0.8, "Max Trend Slope (ATR)", minval=0.1, maxval=5.0, step=0.1, group=groupFilters,
+     tooltip="If EMA moved more than this multiple of ATR over the lookback, treat as strong trend")
+
+useTrendBias = input.bool(false, "Use Trend Bias", group=groupFilters,
+     tooltip="If enabled: LONG only when price is above trend EMA; SHORT only when below. In Swing mode this uses the Swing Filter Timeframe.")
+
+useSarFilter = input.bool(false, "Use Parabolic SAR Confirmation", group=groupFilters,
+     tooltip="Optional confirmation: require price/SAR crossover")
+sarStart = input.float(0.02, "SAR Start", minval=0.001, maxval=0.2, step=0.001, group=groupFilters)
+sarInc = input.float(0.02, "SAR Increment", minval=0.001, maxval=0.2, step=0.001, group=groupFilters)
+sarMax = input.float(0.2, "SAR Max", minval=0.01, maxval=1.0, step=0.01, group=groupFilters)
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SIGNAL THRESHOLD
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -43,14 +77,37 @@ showConditionCount = input.bool(false, "Show Condition Count", group=groupVis,
 int minConditions = signalMode == "Strict (4+ conditions)" ? 4 : 
      signalMode == "Balanced (3+ conditions)" ? 3 : 2
 
+int chartTfSeconds = timeframe.in_seconds()
+int autoSwingFromSeconds = timeframe.in_seconds(autoSwingFromTf)
+bool autoSwing = not na(chartTfSeconds) and not na(autoSwingFromSeconds) and chartTfSeconds >= autoSwingFromSeconds
+
+bool isSwing = tradeMode == "Swing" or (tradeMode == "Auto (based on chart TF)" and autoSwing)
+
+int rocPeriodEff = isSwing ? int(math.min(rocPeriod * 2, 50)) : rocPeriod
+int rocPercentileLookbackEff = isSwing ? int(math.min(rocPercentileLookback * 2, 500)) : rocPercentileLookback
+
+int rsiPeriodEff = isSwing ? int(math.min(math.round(rsiPeriod * 1.5), 50)) : rsiPeriod
+int divLookbackEff = isSwing ? int(math.min(divLookback * 2, 100)) : divLookback
+
+int pivotLeftBarsEff = isSwing ? int(math.min(pivotLeftBars * 2, 20)) : pivotLeftBars
+int pivotRightBarsEff = isSwing ? int(math.min(pivotRightBars * 2, 20)) : pivotRightBars
+
+int volPeriodEff = isSwing ? int(math.min(volPeriod * 2, 200)) : volPeriod
+
+int cooldownBarsEff = isSwing ? int(math.min(cooldownBars * 3, 200)) : cooldownBars
+
+int trendEmaLenEff = isSwing ? int(math.min(trendEmaLen * 2, 500)) : trendEmaLen
+int trendSlopeLookbackEff = isSwing ? int(math.min(trendSlopeLookback * 2, 200)) : trendSlopeLookback
+int atrLenEff = isSwing ? int(math.min(atrLen * 2, 100)) : atrLen
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. ROC EXTREME DETECTION (Percentile Rank)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-roc = 100 * (close - close[rocPeriod]) / close[rocPeriod]
+roc = 100 * (close - close[rocPeriodEff]) / close[rocPeriodEff]
 
 // Calculate percentile rank
-rocPercentile = ta.percentrank(roc, rocPercentileLookback)
+rocPercentile = ta.percentrank(roc, rocPercentileLookbackEff)
 
 // Extreme conditions
 bool rocBullishExtreme = rocPercentile <= (100 - rocExtremeThreshold)  // Bottom percentile
@@ -60,68 +117,55 @@ bool rocBearishExtreme = rocPercentile >= rocExtremeThreshold          // Top pe
 // 2. RSI & MACD DIVERGENCE DETECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-rsi = ta.rsi(close, rsiPeriod)
+rsi = ta.rsi(close, rsiPeriodEff)
 [macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
 
-// Find pivot highs and lows
-pivotHigh = ta.pivothigh(close, 5, 5)
-pivotLow = ta.pivotlow(close, 5, 5)
+// Price pivots (confirmed after pivotRightBars bars)
+pivotHigh = ta.pivothigh(close, pivotLeftBarsEff, pivotRightBarsEff)
+pivotLow = ta.pivotlow(close, pivotLeftBarsEff, pivotRightBarsEff)
 
-// Bullish divergence detection (price lower low, indicator higher low)
-var float lastPriceLow = na
-var float lastRsiLow = na
-var float lastMacdLow = na
-var int lastLowBar = na
-
-if not na(pivotLow)
-    if not na(lastPriceLow) and close < lastPriceLow
-        lastPriceLow := close
-        lastRsiLow := rsi
-        lastMacdLow := macdLine
-        lastLowBar := bar_index
-    else
-        lastPriceLow := close
-        lastRsiLow := rsi
-        lastMacdLow := macdLine
-        lastLowBar := bar_index
+// Divergence uses indicator values at the actual pivot bar (pivotRightBars bars ago).
+var float prevPivotLowPrice = na
+var float prevPivotLowRsi = na
+var float prevPivotLowMacd = na
+var int prevPivotLowIndex = na
 
 bool rsiBullDiv = false
 bool macdBullDiv = false
 
-if not na(pivotLow) and not na(lastPriceLow) and not na(lastLowBar)
-    if bar_index - lastLowBar <= divLookback and bar_index - lastLowBar > 2
-        if close < lastPriceLow and rsi > lastRsiLow
-            rsiBullDiv := true
-        if close < lastPriceLow and macdLine > lastMacdLow
-            macdBullDiv := true
+if not na(pivotLow)
+    int curPivotIndex = bar_index - pivotRightBarsEff
+    float curPriceLow = pivotLow
+    float curRsiLow = rsi[pivotRightBarsEff]
+    float curMacdLow = macdLine[pivotRightBarsEff]
+    if not na(prevPivotLowPrice) and not na(prevPivotLowIndex) and (curPivotIndex - prevPivotLowIndex) <= divLookbackEff
+        rsiBullDiv := curPriceLow < prevPivotLowPrice and curRsiLow > prevPivotLowRsi
+        macdBullDiv := curPriceLow < prevPivotLowPrice and curMacdLow > prevPivotLowMacd
+    prevPivotLowPrice := curPriceLow
+    prevPivotLowRsi := curRsiLow
+    prevPivotLowMacd := curMacdLow
+    prevPivotLowIndex := curPivotIndex
 
-// Bearish divergence detection (price higher high, indicator lower high)
-var float lastPriceHigh = na
-var float lastRsiHigh = na
-var float lastMacdHigh = na
-var int lastHighBar = na
-
-if not na(pivotHigh)
-    if not na(lastPriceHigh) and close > lastPriceHigh
-        lastPriceHigh := close
-        lastRsiHigh := rsi
-        lastMacdHigh := macdLine
-        lastHighBar := bar_index
-    else
-        lastPriceHigh := close
-        lastRsiHigh := rsi
-        lastMacdHigh := macdLine
-        lastHighBar := bar_index
+var float prevPivotHighPrice = na
+var float prevPivotHighRsi = na
+var float prevPivotHighMacd = na
+var int prevPivotHighIndex = na
 
 bool rsiBearDiv = false
 bool macdBearDiv = false
 
-if not na(pivotHigh) and not na(lastPriceHigh) and not na(lastHighBar)
-    if bar_index - lastHighBar <= divLookback and bar_index - lastHighBar > 2
-        if close > lastPriceHigh and rsi < lastRsiHigh
-            rsiBearDiv := true
-        if close > lastPriceHigh and macdLine < lastMacdHigh
-            macdBearDiv := true
+if not na(pivotHigh)
+    int curPivotIndex = bar_index - pivotRightBarsEff
+    float curPriceHigh = pivotHigh
+    float curRsiHigh = rsi[pivotRightBarsEff]
+    float curMacdHigh = macdLine[pivotRightBarsEff]
+    if not na(prevPivotHighPrice) and not na(prevPivotHighIndex) and (curPivotIndex - prevPivotHighIndex) <= divLookbackEff
+        rsiBearDiv := curPriceHigh > prevPivotHighPrice and curRsiHigh < prevPivotHighRsi
+        macdBearDiv := curPriceHigh > prevPivotHighPrice and curMacdHigh < prevPivotHighMacd
+    prevPivotHighPrice := curPriceHigh
+    prevPivotHighRsi := curRsiHigh
+    prevPivotHighMacd := curMacdHigh
+    prevPivotHighIndex := curPivotIndex
 
 bool bullishDivergence = rsiBullDiv or macdBullDiv
 bool bearishDivergence = rsiBearDiv or macdBearDiv
@@ -142,7 +186,7 @@ bool acBearishDecel = ac > 0 and ac < ac[1] and ac[1] < ac[2]  // Turning down f
 // 4. VOLUME EXHAUSTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-volMa = ta.sma(volume, volPeriod)
+volMa = ta.sma(volume, volPeriodEff)
 volSpike = volume > volMa * volSpikeThreshold
 
 // Volume declining after spike (exhaustion pattern)
@@ -175,8 +219,37 @@ if volExhaustion and close > open  // Bullish candle with volume exhaustion sugg
     bearishScore += 1
 
 // Generate signals only when enough conditions align
-bool longSignal = bullishScore >= minConditions
-bool shortSignal = bearishScore >= minConditions
+bool longSignalRaw = bullishScore >= minConditions and bullishScore > bearishScore
+bool shortSignalRaw = bearishScore >= minConditions and bearishScore > bullishScore
+
+trendEmaLocal = ta.ema(close, trendEmaLenEff)
+atrLocal = ta.atr(atrLenEff)
+trendSlopeAtrLocal = atrLocal != 0.0 ? math.abs(trendEmaLocal - trendEmaLocal[trendSlopeLookbackEff]) / atrLocal : na
+
+[trendEmaHTF, trendEmaHTFPrev, atrHTF] = request.security(syminfo.tickerid, swingFilterTf,
+     [ta.ema(close, trendEmaLenEff), ta.ema(close, trendEmaLenEff)[trendSlopeLookbackEff], ta.atr(atrLenEff)],
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+trendSlopeAtrHTF = atrHTF != 0.0 ? math.abs(trendEmaHTF - trendEmaHTFPrev) / atrHTF : na
+
+trendEmaUsed = isSwing ? trendEmaHTF : trendEmaLocal
+trendSlopeAtrUsed = isSwing ? trendSlopeAtrHTF : trendSlopeAtrLocal
+
+regimeOk = not useRegimeFilter or (not na(trendSlopeAtrUsed) and trendSlopeAtrUsed <= maxTrendSlopeAtr)
+trendBiasOkLong = not useTrendBias or close > trendEmaUsed
+trendBiasOkShort = not useTrendBias or close < trendEmaUsed
+
+sar = ta.sar(sarStart, sarInc, sarMax)
+sarLongOk = not useSarFilter or (sar > close or ta.crossover(close, sar))
+sarShortOk = not useSarFilter or (sar < close or ta.crossunder(close, sar))
+
+var int lastSignalBar = na
+canSignal = cooldownBarsEff == 0 or na(lastSignalBar) or (bar_index - lastSignalBar) > cooldownBarsEff
+
+bool longSignal = longSignalRaw and regimeOk and trendBiasOkLong and sarLongOk and canSignal
+bool shortSignal = shortSignalRaw and regimeOk and trendBiasOkShort and sarShortOk and canSignal
+
+if longSignal or shortSignal
+    lastSignalBar := bar_index
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VISUAL SIGNALS
