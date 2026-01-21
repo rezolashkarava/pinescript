@@ -135,25 +135,14 @@ evSweepDown := false
 evDistUp := false
 evDistDown := false
 
-resetAll() =>
-    phase := 0
-    accStartBar := na
-    lockBar := na
-    sweepBar := na
-    distBar := na
-    rangeHigh := na
-    rangeLow := na
-    sweepDir := 0
-    accStreak := 0
-    if not na(accBox)
-        box.delete(accBox)
-        accBox := na
-    if not na(rangeHighLine)
-        line.delete(rangeHighLine)
-        rangeHighLine := na
-    if not na(rangeLowLine)
-        line.delete(rangeLowLine)
-        rangeLowLine := na
+f_resetAll(box _accBox, line _rangeHighLine, line _rangeLowLine) =>
+    if not na(_accBox)
+        box.delete(_accBox)
+    if not na(_rangeHighLine)
+        line.delete(_rangeHighLine)
+    if not na(_rangeLowLine)
+        line.delete(_rangeLowLine)
+    [0, na, na, na, na, na, na, 0, 0, na, na, na]
 
 if shouldUpdate
     // Track consecutive bars meeting accumulation regime.
@@ -161,7 +150,7 @@ if shouldUpdate
 
     // Reset if we somehow lose required series early on.
     if na(atr) or na(rangeHighRoll) or na(rangeLowRoll)
-        resetAll()
+        [phase, accStartBar, lockBar, sweepBar, distBar, rangeHigh, rangeLow, sweepDir, accStreak, accBox, rangeHighLine, rangeLowLine] := f_resetAll(accBox, rangeHighLine, rangeLowLine)
     else
         // Start accumulation once regime holds long enough.
         if phase == 0 and accStreak >= minAccBars
@@ -205,7 +194,7 @@ if shouldUpdate
         if phase == 2
             bool timeOk = not na(lockBar) and bar_index - lockBar <= maxBarsToSweep
             if not timeOk
-                resetAll()
+                [phase, accStartBar, lockBar, sweepBar, distBar, rangeHigh, rangeLow, sweepDir, accStreak, accBox, rangeHighLine, rangeLowLine] := f_resetAll(accBox, rangeHighLine, rangeLowLine)
             else if allowManNow
                 bool sweptUp = high > rangeHigh
                 bool sweptDown = low < rangeLow
@@ -225,7 +214,7 @@ if shouldUpdate
         if phase == 3
             bool timeOk = not na(sweepBar) and bar_index - sweepBar <= maxBarsToDistribute
             if not timeOk
-                resetAll()
+                [phase, accStartBar, lockBar, sweepBar, distBar, rangeHigh, rangeLow, sweepDir, accStreak, accBox, rangeHighLine, rangeLowLine] := f_resetAll(accBox, rangeHighLine, rangeLowLine)
             else if allowDistNow
                 int expectedDir = -sweepDir
                 float body = math.abs(close - open)
@@ -245,7 +234,7 @@ if shouldUpdate
 
         // Distribution phase: ends when a new accumulation regime starts.
         if phase == 4 and accStreak >= minAccBars
-            resetAll()
+            [phase, accStartBar, lockBar, sweepBar, distBar, rangeHigh, rangeLow, sweepDir, accStreak, accBox, rangeHighLine, rangeLowLine] := f_resetAll(accBox, rangeHighLine, rangeLowLine)
 
 // === Visuals ===
 plotshape(showMarkers and evSweepUp, title="M Sweep Up", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="M", textcolor=color.white)
