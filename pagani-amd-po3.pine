@@ -34,7 +34,9 @@ sweepMinExcAtrInput = input.float(0.20, "Min Sweep Excursion (x ATR)", minval=0.
 maxBarsToSweepInput = input.int(150, "Max Bars To Sweep After Acc", minval=10, maxval=2000, group=groupDet)
 
 dispAtrMultInput = input.float(1.1, "Displacement (Body x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupDet)
-minBodyPctTrInput = input.float(0.50, "Displacement (Body / TR)", minval=0.1, maxval=1.0, step=0.05, group=groupDet)
+minBodyPctTrInput = input.float(0.55, "Displacement (Body / TR)", minval=0.1, maxval=1.0, step=0.05, group=groupDet)
+minBarsAfterSweepInput = input.int(1, "Min Bars After Sweep", minval=1, maxval=50, group=groupDet,
+     tooltip="Prevents M and D triggering on the same bar.\nExample: 1 = earliest D on the next candle.")
 dispBarsInput = input.int(1, "Displacement Bars", minval=1, maxval=3, group=groupDet,
      tooltip="Number of consecutive displacement candles required to start Distribution.\nHigher values reduce noise but will miss grindy moves.")
 requireFvgInput = input.bool(false, "Require FVG Confirmation", group=groupDet)
@@ -84,6 +86,7 @@ int maxBarsToSweep = tradingStyle == "Manual" ? maxBarsToSweep0 : tradingStyle =
 
 float dispAtrMult = presetMode == "Institutional (Strict)" ? math.max(dispAtrMultInput, 1.6) : presetMode == "Aggressive" ? math.max(dispAtrMultInput, 1.0) : dispAtrMultInput
 float minBodyPctTr = presetMode == "Institutional (Strict)" ? math.max(minBodyPctTrInput, 0.65) : presetMode == "Aggressive" ? math.max(minBodyPctTrInput, 0.45) : minBodyPctTrInput
+int minBarsAfterSweep = presetMode == "Institutional (Strict)" ? math.max(minBarsAfterSweepInput, 2) : minBarsAfterSweepInput
 int dispBars = presetMode == "Institutional (Strict)" ? math.max(dispBarsInput, 2) : presetMode == "Aggressive" ? 1 : dispBarsInput
 bool requireFvg = presetMode == "Institutional (Strict)" ? true : requireFvgInput
 float fvgMinAtr = presetMode == "Institutional (Strict)" ? math.max(fvgMinAtrInput, 0.20) : presetMode == "Aggressive" ? math.max(fvgMinAtrInput, 0.05) : fvgMinAtrInput
@@ -152,12 +155,14 @@ f_state_reset(AmdState s) =>
 var AmdState st = f_state_new()
 
 // Events (one-bar pulses)
+bool evAccStart = false
 bool evRangeLocked = false
 bool evSweepUp = false
 bool evSweepDown = false
 bool evDistUp = false
 bool evDistDown = false
 
+evAccStart := false
 evRangeLocked := false
 evSweepUp := false
 evSweepDown := false
@@ -175,6 +180,7 @@ if shouldUpdate
         // Start accumulation once regime holds long enough.
         if st.phase == 0 and st.accStreak >= minAccBars
             st.phase := 1
+            evAccStart := true
             st.accStartBar := bar_index - minAccBars + 1
             st.rangeHigh := ta.highest(high, minAccBars)
             st.rangeLow := ta.lowest(low, minAccBars)
@@ -240,6 +246,7 @@ if shouldUpdate
             if not timeOk
                 st := f_state_reset(st)
             else if allowDistNow
+                bool afterSweepOk = not na(st.sweepBar) and (bar_index - st.sweepBar) >= minBarsAfterSweep
                 int expectedDir = -st.sweepDir
                 float body = math.abs(close - open)
 
@@ -253,7 +260,7 @@ if shouldUpdate
                 bool bearFvgSeq = dispBars == 1 ? bearFvgNow : dispBars == 2 ? (bearFvgNow or bearFvgNow[1]) : (bearFvgNow or bearFvgNow[1] or bearFvgNow[2])
                 bool fvgOk = not requireFvg or (expectedDir == 1 ? bullFvgSeq : bearFvgSeq)
 
-                if dispSeqOk and fvgOk
+                if afterSweepOk and dispSeqOk and fvgOk
                     st.phase := 4
                     st.distBar := bar_index
                     evDistUp := expectedDir == 1
@@ -270,6 +277,8 @@ bool inDistState = st.phase == 4
 bgcolor(showDistTint and inDistState ? color.new(st.sweepDir == -1 ? #00ff88 : #ff3366, 92) : na)
 
 // Markers: triangles + letter (clean overlay, candle-anchored)
+plotshape(showMarkers and evAccStart, title="Accumulation Start", style=shape.triangleup, location=location.belowbar, size=size.tiny,
+     color=color.new(color.gray, 0), text="A", textcolor=markerTextCol)
 plotshape(showMarkers and evSweepUp, title="Manipulation (Up Sweep)", style=shape.triangledown, location=location.abovebar, size=size.tiny,
      color=color.new(#ff3366, 0), text="M", textcolor=markerTextCol)
 plotshape(showMarkers and evSweepDown, title="Manipulation (Down Sweep)", style=shape.triangleup, location=location.belowbar, size=size.tiny,
