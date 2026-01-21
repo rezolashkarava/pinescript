@@ -1,40 +1,67 @@
 //@version=6
 indicator("Pagani Absorption Radar [Beta]", overlay=true, max_boxes_count=200, max_labels_count=50)
 
-signalTiming = input.string("Confirmed (bar close)", "Signal Timing", options=["Realtime (intrabar)", "Confirmed (bar close)"])
+groupPreset = "Presets"
+presetMode = input.string("Manual", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
+     tooltip="Institutional: fewer, higher-quality zones/alerts.\nBalanced: defaults.\nAggressive: more signals.\nManual: use inputs as-is.")
+
+signalTimingInput = input.string("Confirmed (bar close)", "Signal Timing", options=["Realtime (intrabar)", "Confirmed (bar close)"])
 
 groupAbs = "Absorption Zones"
 proxyNote = input.string("Absorption is an OHLCV-based proxy (not true L2/tape iceberg confirmation).", "Concept Note", group=groupAbs,
      tooltip="This tool infers absorption-like behavior from price + volume. It cannot access order book (L2) or trade prints, so it cannot confirm true iceberg orders.")
-lenVol = input.int(50, "Volume Baseline Length", minval=10, group=groupAbs)
-zThresh = input.float(2.5, "Volume Z Threshold", minval=0.5, step=0.1, group=groupAbs)
-hitsNeeded = input.int(3, "Hits To Confirm Zone", minval=2, maxval=6, group=groupAbs)
-hitWindow = input.int(20, "Hit Window (bars)", minval=5, maxval=200, group=groupAbs)
-timeoutBars = input.int(60, "Zone Timeout (bars)", minval=20, maxval=500, group=groupAbs)
-thicknessAtrMult = input.float(0.25, "Zone Thickness (ATR mult)", minval=0.05, maxval=2.0, step=0.05, group=groupAbs)
-minThicknessPct = input.float(0.05, "Min Thickness (% of price)", minval=0.0, maxval=1.0, step=0.01, group=groupAbs,
+lenVolInput = input.int(50, "Volume Baseline Length", minval=10, group=groupAbs)
+zThreshInput = input.float(2.5, "Volume Z Threshold", minval=0.5, step=0.1, group=groupAbs)
+hitsNeededInput = input.int(3, "Hits To Confirm Zone", minval=2, maxval=6, group=groupAbs)
+hitWindowInput = input.int(20, "Hit Window (bars)", minval=5, maxval=200, group=groupAbs)
+timeoutBarsInput = input.int(60, "Zone Timeout (bars)", minval=20, maxval=500, group=groupAbs)
+thicknessAtrMultInput = input.float(0.25, "Zone Thickness (ATR mult)", minval=0.05, maxval=2.0, step=0.05, group=groupAbs)
+minThicknessPctInput = input.float(0.05, "Min Thickness (% of price)", minval=0.0, maxval=1.0, step=0.01, group=groupAbs,
      tooltip="Minimum zone thickness as a percent of price (multi-asset guardrail).\nHelps clustering on low-ATR / low-volatility markets.")
-hitAnchor = input.string("Body edge", "Hit Anchor", options=["Body edge", "Wick extreme", "Mid wick"], group=groupAbs,
+hitAnchorInput = input.string("Body edge", "Hit Anchor", options=["Body edge", "Wick extreme", "Mid wick"], group=groupAbs,
      tooltip="Where to anchor an absorption hit price for clustering.\nBody edge is usually the most stable across assets.")
-clusterSlackMult = input.float(3.0, "Clustering Slack (x thickness)", minval=1.0, maxval=10.0, step=0.5, group=groupAbs,
+clusterSlackMultInput = input.float(3.0, "Clustering Slack (x thickness)", minval=1.0, maxval=10.0, step=0.5, group=groupAbs,
      tooltip="How far apart two hits can be (in multiples of zone thickness) and still be treated as the same absorption level.\nIncrease this on low-volatility coins/timeframes.")
-maxZonesPerSide = input.int(6, "Max Zones Per Side", minval=1, maxval=20, group=groupAbs)
-showZones = input.bool(true, "Draw Zones", group=groupAbs)
-showHitMarkers = input.bool(true, "Mark Absorption Hits", group=groupAbs)
+maxZonesPerSideInput = input.int(6, "Max Zones Per Side", minval=1, maxval=20, group=groupAbs)
+showZonesInput = input.bool(true, "Draw Zones", group=groupAbs)
+showHitMarkersInput = input.bool(true, "Mark Absorption Hits", group=groupAbs)
 
 groupSweep = "Liquidity Sweeps (Optional)"
-showSweeps = input.bool(true, "Mark Sweeps", group=groupSweep)
-sweepLookback = input.int(20, "Sweep Lookback", minval=5, maxval=200, group=groupSweep)
-requireVolForSweep = input.bool(true, "Sweep Requires Volume Spike", group=groupSweep)
-sweepVolMult = input.float(1.5, "Sweep Volume Mult", minval=1.0, maxval=5.0, step=0.1, group=groupSweep)
+showSweepsInput = input.bool(true, "Mark Sweeps", group=groupSweep)
+sweepLookbackInput = input.int(20, "Sweep Lookback", minval=5, maxval=200, group=groupSweep)
+requireVolForSweepInput = input.bool(true, "Sweep Requires Volume Spike", group=groupSweep)
+sweepVolMultInput = input.float(1.5, "Sweep Volume Mult", minval=1.0, maxval=5.0, step=0.1, group=groupSweep)
 
 groupAlerts = "Alerts"
-alertNewZone = input.bool(true, "Alert: Zone Confirmed", group=groupAlerts)
-alertZoneBroken = input.bool(true, "Alert: Zone Broken", group=groupAlerts)
-alertSweeps = input.bool(true, "Alert: Sweeps", group=groupAlerts)
+alertNewZoneInput = input.bool(true, "Alert: Zone Confirmed", group=groupAlerts)
+alertZoneBrokenInput = input.bool(true, "Alert: Zone Broken", group=groupAlerts)
+alertSweepsInput = input.bool(true, "Alert: Sweeps", group=groupAlerts)
 
 color bullCol = #00ff88
 color bearCol = #ff3366
+
+string signalTiming = presetMode == "Institutional (Strict)" ? "Confirmed (bar close)" : signalTimingInput
+int lenVol = presetMode == "Institutional (Strict)" ? 100 : presetMode == "Aggressive" ? 30 : lenVolInput
+float zThresh = presetMode == "Institutional (Strict)" ? 3.0 : presetMode == "Aggressive" ? 1.5 : zThreshInput
+int hitsNeeded = presetMode == "Institutional (Strict)" ? 4 : presetMode == "Aggressive" ? 2 : hitsNeededInput
+int hitWindow = presetMode == "Institutional (Strict)" ? 30 : presetMode == "Aggressive" ? 40 : hitWindowInput
+int timeoutBars = presetMode == "Institutional (Strict)" ? 120 : presetMode == "Aggressive" ? 60 : timeoutBarsInput
+float thicknessAtrMult = presetMode == "Institutional (Strict)" ? 0.20 : presetMode == "Aggressive" ? 0.35 : thicknessAtrMultInput
+float minThicknessPct = presetMode == "Institutional (Strict)" ? 0.02 : presetMode == "Aggressive" ? 0.08 : minThicknessPctInput
+string hitAnchor = presetMode == "Institutional (Strict)" ? "Body edge" : hitAnchorInput
+float clusterSlackMult = presetMode == "Institutional (Strict)" ? 2.0 : presetMode == "Aggressive" ? 4.0 : clusterSlackMultInput
+int maxZonesPerSide = presetMode == "Institutional (Strict)" ? 3 : presetMode == "Aggressive" ? 8 : maxZonesPerSideInput
+bool showZones = showZonesInput
+bool showHitMarkers = presetMode == "Institutional (Strict)" ? false : showHitMarkersInput
+
+bool showSweeps = presetMode == "Institutional (Strict)" ? false : showSweepsInput
+int sweepLookback = presetMode == "Institutional (Strict)" ? 50 : presetMode == "Aggressive" ? 15 : sweepLookbackInput
+bool requireVolForSweep = presetMode == "Institutional (Strict)" ? true : requireVolForSweepInput
+float sweepVolMult = presetMode == "Institutional (Strict)" ? 2.5 : presetMode == "Aggressive" ? 1.2 : sweepVolMultInput
+
+bool alertNewZone = presetMode == "Institutional (Strict)" ? true : alertNewZoneInput
+bool alertZoneBroken = presetMode == "Institutional (Strict)" ? false : alertZoneBrokenInput
+bool alertSweeps = presetMode == "Institutional (Strict)" ? false : alertSweepsInput
 
 bool shouldUpdate = signalTiming == "Realtime (intrabar)" or barstate.isconfirmed
 
