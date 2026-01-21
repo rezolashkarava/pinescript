@@ -1,5 +1,5 @@
 //@version=6
-indicator("Pagani AMD / PO3", overlay=true, max_boxes_count=20, max_labels_count=200)
+indicator("Pagani AMD / PO3", overlay=true, max_boxes_count=20, max_labels_count=50)
 
 groupPreset = "Presets"
 presetMode = input.string("Balanced", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
@@ -62,6 +62,7 @@ alertDistInput = input.bool(true, "Alert: Distribution Started", group=groupAler
 
 float bgLuma = 0.299 * color.r(chart.bg_color) + 0.587 * color.g(chart.bg_color) + 0.114 * color.b(chart.bg_color)
 bool chartIsDark = bgLuma < 128
+color markerTextCol = chartIsDark ? color.white : color.black
 
 int tfSec = timeframe.in_seconds(timeframe.period)
 string autoStyle = tfSec <= 300 ? "Scalp" : tfSec <= 1800 ? "Day" : "Swing"
@@ -250,13 +251,6 @@ if shouldUpdate
                     st.sweepDir := manUp ? 1 : -1
                     evSweepUp := manUp
                     evSweepDown := manDown
-                    
-                    // Create sweep labels immediately when event occurs
-                    if showMarkers
-                        if manUp
-                            label.new(bar_index, high, "M", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#ff3366, 0), style=label.style_label_down, textcolor=color.white, size=size.small)
-                        else  
-                            label.new(bar_index, low, "M", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#00ff88, 0), style=label.style_label_up, textcolor=chartIsDark ? color.white : color.black, size=size.small)
 
         // Waiting for distribution confirmation.
         if st.phase == 3
@@ -282,13 +276,6 @@ if shouldUpdate
                     st.distBar := bar_index
                     evDistUp := expectedDir == 1
                     evDistDown := expectedDir == -1
-                    
-                    // Create distribution labels immediately when event occurs
-                    if showMarkers
-                        if expectedDir == 1
-                            label.new(bar_index, low, "D", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#00ff88, 0), style=label.style_label_up, textcolor=chartIsDark ? color.white : color.black, size=size.small)
-                        else
-                            label.new(bar_index, high, "D", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#ff3366, 0), style=label.style_label_down, textcolor=color.white, size=size.small)
 
         // Distribution phase: ends when a new accumulation regime starts.
         if st.phase == 4 and st.accStreak >= minAccBars
@@ -299,6 +286,16 @@ if shouldUpdate
 // === Visuals ===
 bool inDistState = st.phase == 4
 bgcolor(showDistTint and inDistState ? color.new(st.sweepDir == -1 ? #00ff88 : #ff3366, 92) : na)
+
+// Markers: triangles + letter (clean overlay, candle-anchored)
+plotshape(showMarkers and evSweepUp, title="Manipulation (Up Sweep)", style=shape.triangledown, location=location.abovebar, size=size.tiny,
+     color=color.new(#ff3366, 0), text="M", textcolor=markerTextCol)
+plotshape(showMarkers and evSweepDown, title="Manipulation (Down Sweep)", style=shape.triangleup, location=location.belowbar, size=size.tiny,
+     color=color.new(#00ff88, 0), text="M", textcolor=markerTextCol)
+plotshape(showMarkers and evDistUp, title="Distribution (Up)", style=shape.triangleup, location=location.belowbar, size=size.tiny,
+     color=color.new(#00ff88, 0), text="D", textcolor=markerTextCol)
+plotshape(showMarkers and evDistDown, title="Distribution (Down)", style=shape.triangledown, location=location.abovebar, size=size.tiny,
+     color=color.new(#ff3366, 0), text="D", textcolor=markerTextCol)
 
 // === Alerts ===
 alertcondition(alertRangeLocked and evRangeLocked, title="AMD: Range Locked", message="AMD range locked on {{ticker}} {{interval}}")
