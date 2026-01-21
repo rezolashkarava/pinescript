@@ -10,6 +10,8 @@ hitsNeeded = input.int(3, "Hits To Confirm Zone", minval=2, maxval=6, group=grou
 hitWindow = input.int(20, "Hit Window (bars)", minval=5, maxval=200, group=groupAbs)
 timeoutBars = input.int(60, "Zone Timeout (bars)", minval=20, maxval=500, group=groupAbs)
 thicknessAtrMult = input.float(0.25, "Zone Thickness (ATR mult)", minval=0.05, maxval=2.0, step=0.05, group=groupAbs)
+clusterSlackMult = input.float(3.0, "Clustering Slack (x thickness)", minval=1.0, maxval=10.0, step=0.5, group=groupAbs,
+     tooltip="How far apart two hits can be (in multiples of zone thickness) and still be treated as the same absorption level.\nIncrease this on low-volatility coins/timeframes.")
 maxZonesPerSide = input.int(6, "Max Zones Per Side", minval=1, maxval=20, group=groupAbs)
 showZones = input.bool(true, "Draw Zones", group=groupAbs)
 showHitMarkers = input.bool(true, "Mark Absorption Hits", group=groupAbs)
@@ -46,9 +48,9 @@ bool bearAbsorption = bearAbsorptionRaw and shouldUpdate
 
 float hitPrice = na
 if bullAbsorption
-    hitPrice := low + rng * 0.25
+    hitPrice := low
 else if bearAbsorption
-    hitPrice := high - rng * 0.25
+    hitPrice := high
 
 type AbsZone
     box bx
@@ -100,9 +102,17 @@ if shouldUpdate
         float top = hitPrice + halfThick
         float bot = hitPrice - halfThick
 
-        int matchIdx = findMatchingZone(zones, hitPrice, dir, thickness * 1.5)
+        int matchIdx = findMatchingZone(zones, hitPrice, dir, thickness * clusterSlackMult)
         if matchIdx >= 0
             AbsZone z = array.get(zones, matchIdx)
+            // If we didn't reach confirmation within the hit window, restart counting.
+            if bar_index - z.firstBar > hitWindow and z.hits < hitsNeeded
+                z.hits := 0
+                z.firstBar := bar_index
+                z.top := top
+                z.bot := bot
+                z.center := hitPrice
+
             int prevHits = z.hits
             z.hits += 1
             z.lastHitBar := bar_index
@@ -110,9 +120,7 @@ if shouldUpdate
             z.bot := math.min(z.bot, bot)
             z.center := (z.center * prevHits + hitPrice) / z.hits
 
-            // Confirm zone when enough hits occur inside the hit window.
-            bool withinWindow = bar_index - z.firstBar <= hitWindow
-            if withinWindow and prevHits < hitsNeeded and z.hits >= hitsNeeded
+            if prevHits < hitsNeeded and z.hits >= hitsNeeded
                 if showZones and na(z.bx)
                     color c = newZoneColor(dir)
                     z.bx := box.new(z.firstBar, z.top, bar_index, z.bot, xloc=xloc.bar_index, bgcolor=color.new(c, 85), border_color=color.new(c, 10), border_width=1)
