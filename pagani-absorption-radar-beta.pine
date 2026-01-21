@@ -12,6 +12,10 @@ hitsNeeded = input.int(3, "Hits To Confirm Zone", minval=2, maxval=6, group=grou
 hitWindow = input.int(20, "Hit Window (bars)", minval=5, maxval=200, group=groupAbs)
 timeoutBars = input.int(60, "Zone Timeout (bars)", minval=20, maxval=500, group=groupAbs)
 thicknessAtrMult = input.float(0.25, "Zone Thickness (ATR mult)", minval=0.05, maxval=2.0, step=0.05, group=groupAbs)
+minThicknessPct = input.float(0.05, "Min Thickness (% of price)", minval=0.0, maxval=1.0, step=0.01, group=groupAbs,
+     tooltip="Minimum zone thickness as a percent of price (multi-asset guardrail).\nHelps clustering on low-ATR / low-volatility markets.")
+hitAnchor = input.string("Body edge", "Hit Anchor", options=["Body edge", "Wick extreme", "Mid wick"], group=groupAbs,
+     tooltip="Where to anchor an absorption hit price for clustering.\nBody edge is usually the most stable across assets.")
 clusterSlackMult = input.float(3.0, "Clustering Slack (x thickness)", minval=1.0, maxval=10.0, step=0.5, group=groupAbs,
      tooltip="How far apart two hits can be (in multiples of zone thickness) and still be treated as the same absorption level.\nIncrease this on low-volatility coins/timeframes.")
 maxZonesPerSide = input.int(6, "Max Zones Per Side", minval=1, maxval=20, group=groupAbs)
@@ -48,6 +52,9 @@ float upperWick = high - math.max(open, close)
 float lowerWickRatio = rng > 0 ? lowerWick / rng : 0.0
 float upperWickRatio = rng > 0 ? upperWick / rng : 0.0
 
+float bodyLow = math.min(open, close)
+float bodyHigh = math.max(open, close)
+
 bool bullAbsorptionRaw = volZ >= zThresh and bodyToRange <= 0.35 and lowerWickRatio >= 0.50 and close > open
 bool bearAbsorptionRaw = volZ >= zThresh and bodyToRange <= 0.35 and upperWickRatio >= 0.50 and close < open
 
@@ -56,15 +63,16 @@ bool bearAbsorption = bearAbsorptionRaw and shouldUpdate
 
 float hitPrice = na
 if bullAbsorption
-    hitPrice := low
+    hitPrice := hitAnchor == "Wick extreme" ? low : hitAnchor == "Mid wick" ? (low + bodyLow) / 2.0 : bodyLow
 else if bearAbsorption
-    hitPrice := high
+    hitPrice := hitAnchor == "Wick extreme" ? high : hitAnchor == "Mid wick" ? (high + bodyHigh) / 2.0 : bodyHigh
 
 type AbsZone
     box bx
     float top
     float bot
     float center
+    float halfThick
     int hits
     int firstBar
     int lastHitBar
@@ -75,17 +83,19 @@ deleteZone(AbsZone z) =>
     if not na(z.bx)
         box.delete(z.bx)
 
-float thickness = math.max(atrSafe * thicknessAtrMult, syminfo.mintick * 2)
+float pctThickness = close * (minThicknessPct / 100.0)
+float thickness = math.max(atrSafe * thicknessAtrMult, math.max(pctThickness, syminfo.mintick * 2))
 float halfThick = thickness / 2.0
 
-findMatchingZone(array<AbsZone> zones, float price, int dir, float maxDist) =>
+findMatchingZone(array<AbsZone> zones, float price, int dir, float maxDist, float slackMult) =>
     int idx = -1
     int n = array.size(zones)
     if n > 0
         for i = 0 to n - 1
             AbsZone z = array.get(zones, i)
             bool sameSide = z.dir == dir
-            bool nearBand = price <= z.top + maxDist and price >= z.bot - maxDist
+            float slack = math.max(maxDist, z.halfThick * slackMult)
+            bool nearBand = price <= z.top + slack and price >= z.bot - slack
             if sameSide and nearBand
                 idx := i
                 break
@@ -136,16 +146,17 @@ if shouldUpdate
         float top = hitPrice + halfThick
         float bot = hitPrice - halfThick
 
-        int matchIdx = findMatchingZone(zones, hitPrice, dir, thickness * clusterSlackMult)
+        int matchIdx = findMatchingZone(zones, hitPrice, dir, thickness * clusterSlackMult, clusterSlackMult)
         if matchIdx >= 0
             AbsZone z = array.get(zones, matchIdx)
             // If we didn't reach confirmation within the hit window, restart counting.
             if bar_index - z.firstBar > hitWindow and z.hits < hitsNeeded
                 z.hits := 0
                 z.firstBar := bar_index
-                z.top := top
-                z.bot := bot
                 z.center := hitPrice
+                z.halfThick := halfThick
+                z.top := z.center + z.halfThick
+                z.bot := z.center - z.halfThick
                 z.confirmed := false
                 if not na(z.bx)
                     box.delete(z.bx)
@@ -154,9 +165,10 @@ if shouldUpdate
             int prevHits = z.hits
             z.hits += 1
             z.lastHitBar := bar_index
-            z.top := math.max(z.top, top)
-            z.bot := math.min(z.bot, bot)
             z.center := (z.center * prevHits + hitPrice) / z.hits
+            // Keep thickness stable per-zone to avoid zones ballooning.
+            z.top := z.center + z.halfThick
+            z.bot := z.center - z.halfThick
 
             if not z.confirmed and prevHits < hitsNeeded and z.hits >= hitsNeeded
                 z.confirmed := true
@@ -170,7 +182,7 @@ if shouldUpdate
             updateZoneBox(z)
             array.set(zones, matchIdx, z)
         else
-            AbsZone z = AbsZone.new(na, top, bot, hitPrice, 1, bar_index, bar_index, dir, false)
+            AbsZone z = AbsZone.new(na, top, bot, hitPrice, halfThick, 1, bar_index, bar_index, dir, false)
             array.push(zones, z)
 
     // === Update, expire, and invalidate zones ===
@@ -241,7 +253,7 @@ plotshape(bearSweep, title="Bear Sweep", style=shape.triangledown, location=loca
 // === Alerts ===
 alertcondition(alertNewZone and newBullZone, title="Bullish Absorption Zone Confirmed", message="Bullish absorption zone confirmed on {{ticker}} {{interval}}")
 alertcondition(alertNewZone and newBearZone, title="Bearish Absorption Zone Confirmed", message="Bearish absorption zone confirmed on {{ticker}} {{interval}}")
-alertcondition(alertZoneBroken and bullZoneBroken, title="Bullish Absorption Zone Broken", message="Bullish absorption zone broken on {{ticker}} {{interval }}")
-alertcondition(alertZoneBroken and bearZoneBroken, title="Bearish Absorption Zone Broken", message="Bearish absorption zone broken on {{ticker}} {{interval }}")
+alertcondition(alertZoneBroken and bullZoneBroken, title="Bullish Absorption Zone Broken", message="Bullish absorption zone broken on {{ticker}} {{interval}}")
+alertcondition(alertZoneBroken and bearZoneBroken, title="Bearish Absorption Zone Broken", message="Bearish absorption zone broken on {{ticker}} {{interval}}")
 alertcondition(alertSweeps and bullSweep, title="Bullish Sweep", message="Bullish sweep (liquidity grab proxy) on {{ticker}} {{interval}}")
 alertcondition(alertSweeps and bearSweep, title="Bearish Sweep", message="Bearish sweep (liquidity grab proxy) on {{ticker}} {{interval}}")
