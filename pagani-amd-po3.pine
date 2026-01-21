@@ -21,7 +21,8 @@ regimeLenInput = input.int(100, "Regime Length", minval=10, group=groupDet)
 lowVolMultInput = input.float(0.75, "Low Vol Threshold (x ATR MA)", minval=0.1, maxval=2.0, step=0.05, group=groupDet)
 
 rangeLenInput = input.int(30, "Range Lookback (bars)", minval=10, group=groupDet)
-rangeAtrMultInput = input.float(1.2, "Max Range (x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupDet)
+rangeAtrMultInput = input.float(4.0, "Max Range (x ATR)", minval=0.5, maxval=20.0, step=0.1, group=groupDet,
+     tooltip="Defines how tight the consolidation must be.\nRule: rolling range width <= (ATR reference * this multiplier).\nFor most markets, values below ~2 are extremely strict.")
 minRangePctInput = input.float(0.03, "Min Range (% of price)", minval=0.0, maxval=2.0, step=0.01, group=groupDet,
      tooltip="Multi-asset guardrail: prevents the range threshold from becoming too small on low-ATR markets.")
 
@@ -55,7 +56,7 @@ int regimeLen = presetMode == "Institutional (Strict)" ? math.max(regimeLenInput
 float lowVolMult = presetMode == "Institutional (Strict)" ? math.min(lowVolMultInput, 0.65) : presetMode == "Aggressive" ? math.max(lowVolMultInput, 0.85) : lowVolMultInput
 
 int rangeLen = presetMode == "Institutional (Strict)" ? math.max(rangeLenInput, 40) : presetMode == "Aggressive" ? math.max(rangeLenInput, 20) : rangeLenInput
-float rangeAtrMult = presetMode == "Institutional (Strict)" ? math.min(rangeAtrMultInput, 1.0) : presetMode == "Aggressive" ? math.max(rangeAtrMultInput, 1.6) : rangeAtrMultInput
+float rangeAtrMult = presetMode == "Institutional (Strict)" ? math.min(rangeAtrMultInput, 3.0) : presetMode == "Aggressive" ? math.max(rangeAtrMultInput, 5.5) : rangeAtrMultInput
 float minRangePct = presetMode == "Institutional (Strict)" ? math.min(minRangePctInput, 0.02) : presetMode == "Aggressive" ? math.max(minRangePctInput, 0.06) : minRangePctInput
 int minAccBars = presetMode == "Institutional (Strict)" ? math.max(minAccBarsInput, 16) : presetMode == "Aggressive" ? math.max(minAccBarsInput, 8) : minAccBarsInput
 
@@ -96,7 +97,8 @@ float rangeHighRoll = ta.highest(high, rangeLen)
 float rangeLowRoll = ta.lowest(low, rangeLen)
 float rangeWidthRoll = rangeHighRoll - rangeLowRoll
 float rangeMinFloor = close * (minRangePct / 100.0)
-float rangeMax = math.max(atr * rangeAtrMult, rangeMinFloor)
+float atrRef = na(atrMa) ? atr : atrMa
+float rangeMax = math.max(atrRef * rangeAtrMult, rangeMinFloor)
 bool lowVol = not na(atrMa) and atr < atrMa * lowVolMult
 bool tightRange = rangeWidthRoll <= rangeMax
 
