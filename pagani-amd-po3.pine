@@ -233,8 +233,10 @@ if shouldUpdate
                         line.delete(rangeHighLine)
                     if not na(rangeLowLine)
                         line.delete(rangeLowLine)
-                    rangeHighLine := line.new(x1=lockBar, y1=rangeHigh, x2=bar_index, y2=rangeHigh, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
-                    rangeLowLine := line.new(x1=lockBar, y1=rangeLow, x2=bar_index, y2=rangeLow, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
+                    // Draw the locked range across the accumulation window.
+                    // Avoid extending to the last bar so drawings behave predictably when panning/zooming.
+                    rangeHighLine := line.new(x1=accStartBar, y1=rangeHigh, x2=lockBar, y2=rangeHigh, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
+                    rangeLowLine := line.new(x1=accStartBar, y1=rangeLow, x2=lockBar, y2=rangeLow, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
 
         // Waiting for sweep.
         if phase == 2
@@ -323,13 +325,7 @@ if shouldUpdate
             rangeHighLine := na
             rangeLowLine := na
 
-    // Keep range lines attached to the locked bar and the latest bar.
-    if showRangeLines and not na(rangeHighLine) and not na(rangeHigh) and not na(lockBar)
-        line.set_xy1(rangeHighLine, lockBar, rangeHigh)
-        line.set_xy2(rangeHighLine, bar_index, rangeHigh)
-    if showRangeLines and not na(rangeLowLine) and not na(rangeLow) and not na(lockBar)
-        line.set_xy1(rangeLowLine, lockBar, rangeLow)
-        line.set_xy2(rangeLowLine, bar_index, rangeLow)
+    // No continuous line updates: keep drawings anchored to their creation bars.
 
 // === Visuals ===
 plotshape(showMarkers and evSweepUp, title="M Sweep Up", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="M", textcolor=color.white)
