@@ -28,6 +28,7 @@ color bearCol = #ff3366
 bool shouldUpdate = signalTiming == "Realtime (intrabar)" or barstate.isconfirmed
 
 float atr = ta.atr(14)
+float atrSafe = na(atr) ? 0.0 : atr
 float avgVol = ta.sma(volume, lenVol)
 float stdevVol = ta.stdev(volume, lenVol)
 float volZ = (not na(stdevVol) and stdevVol > 0) ? (volume - avgVol) / stdevVol : 0.0
@@ -66,7 +67,7 @@ deleteZone(AbsZone z) =>
     if not na(z.bx)
         box.delete(z.bx)
 
-float thickness = math.max(atr * thicknessAtrMult, syminfo.mintick * 2)
+float thickness = math.max(atrSafe * thicknessAtrMult, syminfo.mintick * 2)
 float halfThick = thickness / 2.0
 
 findMatchingZone(array<AbsZone> zones, float price, int dir, float maxDist) =>
@@ -75,7 +76,9 @@ findMatchingZone(array<AbsZone> zones, float price, int dir, float maxDist) =>
     if n > 0
         for i = 0 to n - 1
             AbsZone z = array.get(zones, i)
-            if z.dir == dir and math.abs(price - z.center) <= maxDist
+            bool sameSide = z.dir == dir
+            bool nearBand = price <= z.top + maxDist and price >= z.bot - maxDist
+            if sameSide and nearBand
                 idx := i
                 break
     idx
