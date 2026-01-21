@@ -215,8 +215,8 @@ if shouldUpdate
                         line.delete(rangeHighLine)
                     if not na(rangeLowLine)
                         line.delete(rangeLowLine)
-                    rangeHighLine := line.new(bar_index, rangeHigh, bar_index + 1, rangeHigh, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.gray, 30), width=1)
-                    rangeLowLine := line.new(bar_index, rangeLow, bar_index + 1, rangeLow, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.gray, 30), width=1)
+                    rangeHighLine := line.new(bar_index, rangeHigh, bar_index, rangeHigh, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
+                    rangeLowLine := line.new(bar_index, rangeLow, bar_index, rangeLow, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
 
         // Waiting for sweep.
         if phase == 2
@@ -299,6 +299,12 @@ if shouldUpdate
             accBox := na
             rangeHighLine := na
             rangeLowLine := na
+
+    // Keep range lines attached to the latest bar.
+    if showRangeLines and not na(rangeHighLine) and not na(rangeHigh)
+        line.set_xy2(rangeHighLine, bar_index, rangeHigh)
+    if showRangeLines and not na(rangeLowLine) and not na(rangeLow)
+        line.set_xy2(rangeLowLine, bar_index, rangeLow)
 
 // === Visuals ===
 plotshape(showMarkers and evSweepUp, title="M Sweep Up", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="M", textcolor=color.white)
