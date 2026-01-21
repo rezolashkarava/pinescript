@@ -5,6 +5,9 @@ groupPreset = "Presets"
 presetMode = input.string("Institutional (Strict)", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
      tooltip="Institutional: fewer, higher-quality phase shifts.\nBalanced: defaults.\nAggressive: more signals.\nManual: use all inputs as-is.")
 
+tradingStyleInput = input.string("Auto", "Trading Style", options=["Auto", "Scalp", "Day", "Swing", "Manual"], group=groupPreset,
+     tooltip="Auto uses chart timeframe to pick Scalp/Day/Swing defaults.\nManual uses raw inputs without timeframe scaling.")
+
 groupSess = "Sessions (Optional Filter)"
 tzInput = input.string("America/New_York", "Timezone", group=groupSess)
 useSessionFilterInput = input.bool(true, "Use Session Filter", group=groupSess,
@@ -48,26 +51,38 @@ alertRangeLockedInput = input.bool(true, "Alert: Range Locked", group=groupAlert
 alertSweepInput = input.bool(true, "Alert: Manipulation Sweep", group=groupAlerts)
 alertDistInput = input.bool(true, "Alert: Distribution Started", group=groupAlerts)
 
-bool useSessionFilter = presetMode == "Institutional (Strict)" ? true : useSessionFilterInput
+float bgLuma = 0.299 * color.r(chart.bg_color) + 0.587 * color.g(chart.bg_color) + 0.114 * color.b(chart.bg_color)
+bool chartIsDark = bgLuma < 128
+
+int tfSec = timeframe.in_seconds(timeframe.period)
+string autoStyle = tfSec <= 300 ? "Scalp" : tfSec <= 1800 ? "Day" : "Swing"
+string tradingStyle = tradingStyleInput == "Auto" ? autoStyle : tradingStyleInput
+
+bool useSessionFilter = presetMode == "Institutional (Strict)" ? true : tradingStyle == "Swing" ? false : useSessionFilterInput
 string signalTiming = presetMode == "Institutional (Strict)" ? "Confirmed (bar close)" : signalTimingInput
 
 int atrLen = presetMode == "Aggressive" ? math.max(atrLenInput, 10) : atrLenInput
-int regimeLen = presetMode == "Institutional (Strict)" ? math.max(regimeLenInput, 150) : presetMode == "Aggressive" ? math.max(regimeLenInput, 60) : regimeLenInput
+int regimeLen0 = presetMode == "Institutional (Strict)" ? math.max(regimeLenInput, 150) : presetMode == "Aggressive" ? math.max(regimeLenInput, 60) : regimeLenInput
+int regimeLen = tradingStyle == "Manual" ? regimeLen0 : tradingStyle == "Scalp" ? math.min(regimeLen0, 80) : tradingStyle == "Swing" ? math.max(regimeLen0, 200) : regimeLen0
 float lowVolMult = presetMode == "Institutional (Strict)" ? math.min(lowVolMultInput, 0.65) : presetMode == "Aggressive" ? math.max(lowVolMultInput, 0.85) : lowVolMultInput
 
-int rangeLen = presetMode == "Institutional (Strict)" ? math.max(rangeLenInput, 40) : presetMode == "Aggressive" ? math.max(rangeLenInput, 20) : rangeLenInput
+int rangeLen0 = presetMode == "Institutional (Strict)" ? math.max(rangeLenInput, 40) : presetMode == "Aggressive" ? math.max(rangeLenInput, 20) : rangeLenInput
+int rangeLen = tradingStyle == "Manual" ? rangeLen0 : tradingStyle == "Scalp" ? math.min(rangeLen0, 25) : tradingStyle == "Swing" ? math.max(rangeLen0, 60) : rangeLen0
 float rangeAtrMult = presetMode == "Institutional (Strict)" ? math.min(rangeAtrMultInput, 3.0) : presetMode == "Aggressive" ? math.max(rangeAtrMultInput, 5.5) : rangeAtrMultInput
 float minRangePct = presetMode == "Institutional (Strict)" ? math.min(minRangePctInput, 0.02) : presetMode == "Aggressive" ? math.max(minRangePctInput, 0.06) : minRangePctInput
-int minAccBars = presetMode == "Institutional (Strict)" ? math.max(minAccBarsInput, 16) : presetMode == "Aggressive" ? math.max(minAccBarsInput, 8) : minAccBarsInput
+int minAccBars0 = presetMode == "Institutional (Strict)" ? math.max(minAccBarsInput, 16) : presetMode == "Aggressive" ? math.max(minAccBarsInput, 8) : minAccBarsInput
+int minAccBars = tradingStyle == "Manual" ? minAccBars0 : tradingStyle == "Scalp" ? math.min(minAccBars0, 10) : tradingStyle == "Swing" ? math.max(minAccBars0, 20) : minAccBars0
 
 bool requireCloseBack = presetMode == "Institutional (Strict)" ? true : requireCloseBackInput
-int maxBarsToSweep = presetMode == "Institutional (Strict)" ? math.min(maxBarsToSweepInput, 90) : presetMode == "Aggressive" ? math.max(maxBarsToSweepInput, 240) : maxBarsToSweepInput
+int maxBarsToSweep0 = presetMode == "Institutional (Strict)" ? math.min(maxBarsToSweepInput, 90) : presetMode == "Aggressive" ? math.max(maxBarsToSweepInput, 240) : maxBarsToSweepInput
+int maxBarsToSweep = tradingStyle == "Manual" ? maxBarsToSweep0 : tradingStyle == "Scalp" ? math.min(maxBarsToSweep0, 60) : tradingStyle == "Swing" ? math.max(maxBarsToSweep0, 400) : maxBarsToSweep0
 
 float dispAtrMult = presetMode == "Institutional (Strict)" ? math.max(dispAtrMultInput, 1.6) : presetMode == "Aggressive" ? math.max(dispAtrMultInput, 1.0) : dispAtrMultInput
 float minBodyPctTr = presetMode == "Institutional (Strict)" ? math.max(minBodyPctTrInput, 0.65) : presetMode == "Aggressive" ? math.max(minBodyPctTrInput, 0.45) : minBodyPctTrInput
 bool requireFvg = presetMode == "Institutional (Strict)" ? true : requireFvgInput
 float fvgMinAtr = presetMode == "Institutional (Strict)" ? math.max(fvgMinAtrInput, 0.20) : presetMode == "Aggressive" ? math.max(fvgMinAtrInput, 0.05) : fvgMinAtrInput
-int maxBarsToDistribute = presetMode == "Institutional (Strict)" ? math.min(maxBarsToDistributeInput, 180) : presetMode == "Aggressive" ? math.max(maxBarsToDistributeInput, 360) : maxBarsToDistributeInput
+int maxBarsToDistribute0 = presetMode == "Institutional (Strict)" ? math.min(maxBarsToDistributeInput, 180) : presetMode == "Aggressive" ? math.max(maxBarsToDistributeInput, 360) : maxBarsToDistributeInput
+int maxBarsToDistribute = tradingStyle == "Manual" ? maxBarsToDistribute0 : tradingStyle == "Scalp" ? math.min(maxBarsToDistribute0, 120) : tradingStyle == "Swing" ? math.max(maxBarsToDistribute0, 800) : maxBarsToDistribute0
 
 bool showAccBox = showAccBoxInput
 bool showRangeLines = showRangeLinesInput
@@ -287,8 +302,8 @@ if shouldUpdate
 
 // === Visuals ===
 plotshape(showMarkers and evSweepUp, title="M Sweep Up", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="M", textcolor=color.white)
-plotshape(showMarkers and evSweepDown, title="M Sweep Down", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="M", textcolor=color.black)
-plotshape(showMarkers and evDistUp, title="D Up", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="D", textcolor=color.black)
+plotshape(showMarkers and evSweepDown, title="M Sweep Down", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="M", textcolor=chartIsDark ? color.white : color.black)
+plotshape(showMarkers and evDistUp, title="D Up", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="D", textcolor=chartIsDark ? color.white : color.black)
 plotshape(showMarkers and evDistDown, title="D Down", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="D", textcolor=color.white)
 
 bool inDistState = phase == 4
