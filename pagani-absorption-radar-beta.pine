@@ -117,9 +117,7 @@ newBearZone := false
 bullZoneBroken := false
 bearZoneBroken := false
 
-var bool lastShowZones = na
-if na(lastShowZones)
-    lastShowZones := showZones
+var bool lastShowZones = showZones
 
 if shouldUpdate
     // If user toggles drawing ON, render already-confirmed zones.
