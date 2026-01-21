@@ -8,46 +8,38 @@ presetMode = input.string("Balanced", "Preset", options=["Institutional (Strict)
 tradingStyleInput = input.string("Auto", "Trading Style", options=["Auto", "Scalp", "Day", "Swing", "Manual"], group=groupPreset,
      tooltip="Auto uses chart timeframe to pick Scalp/Day/Swing defaults.\nManual uses raw inputs without timeframe scaling.")
 
-groupSess = "Sessions (Optional Filter)"
-tzInput = input.string("America/New_York", "Timezone", group=groupSess)
-useSessionFilterInput = input.bool(false, "Use Session Filter", group=groupSess,
-     tooltip="If enabled, Manipulation/Distribution triggers are only allowed inside the configured session windows.\nFor crypto, this is a liquidity filter (not a requirement).")
-accSessionInput = input.session("2000-0000", "Accumulation Window", group=groupSess)
-manSessionInput = input.session("0000-0300", "Manipulation Window", group=groupSess)
-distSessionInput = input.session("0300-0800", "Distribution Window", group=groupSess)
-
 groupDet = "Detection"
 signalTimingInput = input.string("Confirmed (bar close)", "Signal Timing", options=["Confirmed (bar close)", "Realtime (intrabar)"], group=groupDet)
 
 atrLenInput = input.int(14, "ATR Length", minval=1, group=groupDet)
-regimeLenInput = input.int(100, "Regime Length", minval=10, group=groupDet)
-lowVolMultInput = input.float(0.90, "Low Vol Threshold (x ATR MA)", minval=0.1, maxval=2.0, step=0.05, group=groupDet)
+regimeLenInput = input.int(120, "Regime Length", minval=10, group=groupDet)
+lowVolMultInput = input.float(0.95, "Low Vol Threshold (x ATR MA)", minval=0.1, maxval=2.0, step=0.05, group=groupDet)
 volRegimeModeInput = input.string("ATR %Rank", "Volatility Regime Mode", options=["ATR/MA", "ATR %Rank"], group=groupDet,
      tooltip="ATR/MA: low volatility when ATR < ATR moving average * threshold.\nATR %Rank: low volatility when ATR is in the lowest percentile of its own history (more robust across assets).")
-atrPctLookbackInput = input.int(200, "ATR %Rank Lookback", minval=20, maxval=5000, group=groupDet)
-lowVolPctThresholdInput = input.float(40.0, "Low Vol %Rank Threshold", minval=1.0, maxval=50.0, step=1.0, group=groupDet,
+atrPctLookbackInput = input.int(250, "ATR %Rank Lookback", minval=20, maxval=5000, group=groupDet)
+lowVolPctThresholdInput = input.float(35.0, "Low Vol %Rank Threshold", minval=1.0, maxval=50.0, step=1.0, group=groupDet,
      tooltip="Only used when Volatility Regime Mode = ATR %Rank.\nExample: 25 means ATR is in the lowest 25% of the last N bars.")
 
-rangeLenInput = input.int(30, "Range Lookback (bars)", minval=10, group=groupDet)
+rangeLenInput = input.int(25, "Range Lookback (bars)", minval=10, group=groupDet)
 rangeAtrMultInput = input.float(4.0, "Max Range (x ATR)", minval=0.5, maxval=20.0, step=0.1, group=groupDet,
      tooltip="Defines how tight the consolidation must be.\nRule: rolling range width <= (ATR reference * this multiplier).\nFor most markets, values below ~2 are extremely strict.")
-minRangePctInput = input.float(0.03, "Min Range (% of price)", minval=0.0, maxval=2.0, step=0.01, group=groupDet,
+minRangePctInput = input.float(0.04, "Min Range (% of price)", minval=0.0, maxval=2.0, step=0.01, group=groupDet,
      tooltip="Multi-asset guardrail: prevents the range threshold from becoming too small on low-ATR markets.")
 
-minAccBarsInput = input.int(8, "Min Accumulation Bars", minval=5, maxval=200, group=groupDet)
+minAccBarsInput = input.int(10, "Min Accumulation Bars", minval=5, maxval=200, group=groupDet)
 
 requireCloseBackInput = input.bool(true, "Sweep Requires Close Back Inside", group=groupDet)
-sweepMinExcAtrInput = input.float(0.15, "Min Sweep Excursion (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupDet,
+sweepMinExcAtrInput = input.float(0.20, "Min Sweep Excursion (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupDet,
      tooltip="Minimum distance price must run beyond the range boundary to count as a sweep.\nSet > 0 to avoid micro-wick noise on low timeframes.")
-maxBarsToSweepInput = input.int(120, "Max Bars To Sweep After Acc", minval=10, maxval=2000, group=groupDet)
+maxBarsToSweepInput = input.int(150, "Max Bars To Sweep After Acc", minval=10, maxval=2000, group=groupDet)
 
-dispAtrMultInput = input.float(1.2, "Displacement (Body x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupDet)
-minBodyPctTrInput = input.float(0.55, "Displacement (Body / TR)", minval=0.1, maxval=1.0, step=0.05, group=groupDet)
+dispAtrMultInput = input.float(1.1, "Displacement (Body x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupDet)
+minBodyPctTrInput = input.float(0.50, "Displacement (Body / TR)", minval=0.1, maxval=1.0, step=0.05, group=groupDet)
 dispBarsInput = input.int(1, "Displacement Bars", minval=1, maxval=3, group=groupDet,
      tooltip="Number of consecutive displacement candles required to start Distribution.\nHigher values reduce noise but will miss grindy moves.")
 requireFvgInput = input.bool(false, "Require FVG Confirmation", group=groupDet)
 fvgMinAtrInput = input.float(0.10, "Min FVG (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupDet)
-maxBarsToDistributeInput = input.int(240, "Max Bars To Distribute After Sweep", minval=10, maxval=5000, group=groupDet)
+maxBarsToDistributeInput = input.int(300, "Max Bars To Distribute After Sweep", minval=10, maxval=5000, group=groupDet)
 
 groupVis = "Visuals"
 showAccBoxInput = input.bool(true, "Show Accumulation Box", group=groupVis)
@@ -68,7 +60,6 @@ int tfSec = timeframe.in_seconds(timeframe.period)
 string autoStyle = tfSec <= 300 ? "Scalp" : tfSec <= 1800 ? "Day" : "Swing"
 string tradingStyle = tradingStyleInput == "Auto" ? autoStyle : tradingStyleInput
 
-bool useSessionFilter = tradingStyle == "Swing" ? false : useSessionFilterInput
 string signalTiming = presetMode == "Institutional (Strict)" ? "Confirmed (bar close)" : signalTimingInput
 
 int atrLen = presetMode == "Aggressive" ? math.max(atrLenInput, 10) : atrLenInput
@@ -110,15 +101,6 @@ bool alertDist = presetMode == "Institutional (Strict)" ? true : alertDistInput
 
 bool shouldUpdate = signalTiming == "Realtime (intrabar)" or barstate.isconfirmed
 
-string days = "1234567"
-string accStr = accSessionInput + ":" + days
-string manStr = manSessionInput + ":" + days
-string distStr = distSessionInput + ":" + days
-
-bool inAcc = not na(time(timeframe.period, accStr, tzInput))
-bool inMan = not na(time(timeframe.period, manStr, tzInput))
-bool inDist = not na(time(timeframe.period, distStr, tzInput))
-
 float atr = ta.atr(atrLen)
 float atrMa = ta.sma(atr, regimeLen)
 float tr = ta.tr(true)
@@ -138,8 +120,8 @@ bool tightRange = rangeWidthRoll <= rangeMax
 
 bool accCond = lowVol and tightRange
 
-bool allowManNow = not useSessionFilter or inMan
-bool allowDistNow = not useSessionFilter or inDist
+bool allowManNow = true
+bool allowDistNow = true
 
 type AmdState
     int phase
