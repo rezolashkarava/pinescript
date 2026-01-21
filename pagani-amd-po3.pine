@@ -1,5 +1,5 @@
 //@version=6
-indicator("Pagani AMD / PO3", overlay=true, max_boxes_count=20, max_labels_count=50)
+indicator("Pagani AMD / PO3", overlay=true, max_boxes_count=20, max_labels_count=200)
 
 groupPreset = "Presets"
 presetMode = input.string("Institutional (Strict)", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
@@ -137,25 +137,36 @@ bool tightRange = rangeWidthRoll <= rangeMax
 
 bool accCond = lowVol and tightRange
 
-// === Phase state ===
-// 0: idle, 1: accumulation (building), 2: range locked (waiting sweep), 3: sweep confirmed (waiting distribution), 4: distribution
-var int phase = 0
-var int accStartBar = na
-var int lockBar = na
-var int sweepBar = na
-var int distBar = na
-var float rangeHigh = na
-var float rangeLow = na
-var int sweepDir = 0
-
-var box accBox = na
-var line rangeHighLine = na
-var line rangeLowLine = na
-
-var int accStreak = 0
-
 bool allowManNow = not useSessionFilter or inMan
 bool allowDistNow = not useSessionFilter or inDist
+
+type AmdState
+    int phase
+    int accStartBar
+    int lockBar
+    int sweepBar
+    int distBar
+    float rangeHigh
+    float rangeLow
+    int sweepDir
+    int accStreak
+    box accBox
+    line rangeHighLine
+    line rangeLowLine
+
+f_state_new() =>
+    AmdState.new(0, na, na, na, na, na, na, 0, 0, na, na, na)
+
+f_state_reset(AmdState s) =>
+    if not na(s.accBox)
+        box.delete(s.accBox)
+    if not na(s.rangeHighLine)
+        line.delete(s.rangeHighLine)
+    if not na(s.rangeLowLine)
+        line.delete(s.rangeLowLine)
+    f_state_new()
+
+var AmdState st = f_state_new()
 
 // Events (one-bar pulses)
 bool evRangeLocked = false
@@ -170,105 +181,73 @@ evSweepDown := false
 evDistUp := false
 evDistDown := false
 
-f_deleteObjects(box _accBox, line _rangeHighLine, line _rangeLowLine) =>
-    if not na(_accBox)
-        box.delete(_accBox)
-    if not na(_rangeHighLine)
-        line.delete(_rangeHighLine)
-    if not na(_rangeLowLine)
-        line.delete(_rangeLowLine)
-
 if shouldUpdate
     // Track consecutive bars meeting accumulation regime.
-    accStreak := accCond ? accStreak + 1 : 0
+    st.accStreak := accCond ? st.accStreak + 1 : 0
 
     // Reset if we somehow lose required series early on.
     if na(atr) or na(rangeHighRoll) or na(rangeLowRoll)
-        f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
-        phase := 0
-        accStartBar := na
-        lockBar := na
-        sweepBar := na
-        distBar := na
-        rangeHigh := na
-        rangeLow := na
-        sweepDir := 0
-        accStreak := 0
-        accBox := na
-        rangeHighLine := na
-        rangeLowLine := na
+        st := f_state_reset(st)
     else
         // Start accumulation once regime holds long enough.
-        if phase == 0 and accStreak >= minAccBars
-            phase := 1
-            accStartBar := bar_index - minAccBars + 1
-            rangeHigh := ta.highest(high, minAccBars)
-            rangeLow := ta.lowest(low, minAccBars)
-            lockBar := na
-            sweepBar := na
-            distBar := na
-            sweepDir := 0
-            if not na(accBox)
-                box.delete(accBox)
-            accBox := na
+        if st.phase == 0 and st.accStreak >= minAccBars
+            st.phase := 1
+            st.accStartBar := bar_index - minAccBars + 1
+            st.rangeHigh := ta.highest(high, minAccBars)
+            st.rangeLow := ta.lowest(low, minAccBars)
+            st.lockBar := na
+            st.sweepBar := na
+            st.distBar := na
+            st.sweepDir := 0
+            if not na(st.accBox)
+                box.delete(st.accBox)
+            st.accBox := na
             if showAccBox
-                accBox := box.new(accStartBar, rangeHigh, bar_index, rangeLow, xloc=xloc.bar_index, bgcolor=color.new(color.gray, 90), border_color=color.new(color.gray, 40), border_width=1)
+                st.accBox := box.new(st.accStartBar, st.rangeHigh, bar_index, st.rangeLow, xloc=xloc.bar_index, bgcolor=color.new(color.gray, 90), border_color=color.new(color.gray, 40), border_width=1)
 
         // While accumulating, keep expanding the range.
-        if phase == 1
-            rangeHigh := math.max(rangeHigh, high)
-            rangeLow := math.min(rangeLow, low)
-            if showAccBox and not na(accBox)
-                box.set_lefttop(accBox, accStartBar, rangeHigh)
-                box.set_rightbottom(accBox, bar_index, rangeLow)
+        if st.phase == 1
+            st.rangeHigh := math.max(st.rangeHigh, high)
+            st.rangeLow := math.min(st.rangeLow, low)
+            if showAccBox and not na(st.accBox)
+                box.set_lefttop(st.accBox, st.accStartBar, st.rangeHigh)
+                box.set_rightbottom(st.accBox, bar_index, st.rangeLow)
 
             // Lock the range when the low-vol regime breaks.
             if not accCond
-                phase := 2
-                lockBar := bar_index
+                st.phase := 2
+                st.lockBar := bar_index
                 evRangeLocked := true
 
                 if showRangeLines
-                    if not na(rangeHighLine)
-                        line.delete(rangeHighLine)
-                    if not na(rangeLowLine)
-                        line.delete(rangeLowLine)
+                    if not na(st.rangeHighLine)
+                        line.delete(st.rangeHighLine)
+                    if not na(st.rangeLowLine)
+                        line.delete(st.rangeLowLine)
                     // Draw the locked range across the accumulation window.
                     // Avoid extending to the last bar so drawings behave predictably when panning/zooming.
-                    rangeHighLine := line.new(x1=accStartBar, y1=rangeHigh, x2=lockBar, y2=rangeHigh, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
-                    rangeLowLine := line.new(x1=accStartBar, y1=rangeLow, x2=lockBar, y2=rangeLow, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
+                    st.rangeHighLine := line.new(x1=st.accStartBar, y1=st.rangeHigh, x2=st.lockBar, y2=st.rangeHigh, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
+                    st.rangeLowLine := line.new(x1=st.accStartBar, y1=st.rangeLow, x2=st.lockBar, y2=st.rangeLow, xloc=xloc.bar_index, extend=extend.none, color=color.new(color.gray, 30), width=1)
 
         // Waiting for sweep.
-        if phase == 2
-            bool timeOk = not na(lockBar) and bar_index - lockBar <= maxBarsToSweep
+        if st.phase == 2
+            bool timeOk = not na(st.lockBar) and bar_index - st.lockBar <= maxBarsToSweep
             if not timeOk
-                f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
-                phase := 0
-                accStartBar := na
-                lockBar := na
-                sweepBar := na
-                distBar := na
-                rangeHigh := na
-                rangeLow := na
-                sweepDir := 0
-                accStreak := 0
-                accBox := na
-                rangeHighLine := na
-                rangeLowLine := na
+                st := f_state_reset(st)
             else if allowManNow
-                bool sweptUp = high > rangeHigh
-                bool sweptDown = low < rangeLow
-                bool excUpOk = sweepMinExcAtr <= 0 ? true : (high - rangeHigh) >= sweepMinExcAtr * atrRef
-                bool excDownOk = sweepMinExcAtr <= 0 ? true : (rangeLow - low) >= sweepMinExcAtr * atrRef
-                bool closeBackUp = not requireCloseBack or close < rangeHigh
-                bool closeBackDown = not requireCloseBack or close > rangeLow
+                bool sweptUp = high > st.rangeHigh
+                bool sweptDown = low < st.rangeLow
+                bool excUpOk = sweepMinExcAtr <= 0 ? true : (high - st.rangeHigh) >= sweepMinExcAtr * atrRef
+                bool excDownOk = sweepMinExcAtr <= 0 ? true : (st.rangeLow - low) >= sweepMinExcAtr * atrRef
+                bool closeBackUp = not requireCloseBack or close < st.rangeHigh
+                bool closeBackDown = not requireCloseBack or close > st.rangeLow
                 bool manUp = sweptUp and excUpOk and closeBackUp
                 bool manDown = sweptDown and excDownOk and closeBackDown
 
                 if manUp or manDown
-                    phase := 3
-                    sweepBar := bar_index
-                    sweepDir := manUp ? 1 : -1
+                    st.phase := 3
+                    st.sweepBar := bar_index
+                    st.sweepDir := manUp ? 1 : -1
                     evSweepUp := manUp
                     evSweepDown := manDown
                     
@@ -280,24 +259,12 @@ if shouldUpdate
                             label.new(bar_index, low, "M", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#00ff88, 0), style=label.style_label_up, textcolor=chartIsDark ? color.white : color.black, size=size.small)
 
         // Waiting for distribution confirmation.
-        if phase == 3
-            bool timeOk = not na(sweepBar) and bar_index - sweepBar <= maxBarsToDistribute
+        if st.phase == 3
+            bool timeOk = not na(st.sweepBar) and bar_index - st.sweepBar <= maxBarsToDistribute
             if not timeOk
-                f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
-                phase := 0
-                accStartBar := na
-                lockBar := na
-                sweepBar := na
-                distBar := na
-                rangeHigh := na
-                rangeLow := na
-                sweepDir := 0
-                accStreak := 0
-                accBox := na
-                rangeHighLine := na
-                rangeLowLine := na
+                st := f_state_reset(st)
             else if allowDistNow
-                int expectedDir = -sweepDir
+                int expectedDir = -st.sweepDir
                 float body = math.abs(close - open)
 
                 bool dirOk = expectedDir == 1 ? close > open : close < open
@@ -311,8 +278,8 @@ if shouldUpdate
                 bool fvgOk = not requireFvg or (expectedDir == 1 ? bullFvgSeq : bearFvgSeq)
 
                 if dispSeqOk and fvgOk
-                    phase := 4
-                    distBar := bar_index
+                    st.phase := 4
+                    st.distBar := bar_index
                     evDistUp := expectedDir == 1
                     evDistDown := expectedDir == -1
                     
@@ -324,26 +291,14 @@ if shouldUpdate
                             label.new(bar_index, high, "D", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#ff3366, 0), style=label.style_label_down, textcolor=color.white, size=size.small)
 
         // Distribution phase: ends when a new accumulation regime starts.
-        if phase == 4 and accStreak >= minAccBars
-            f_deleteObjects(accBox, rangeHighLine, rangeLowLine)
-            phase := 0
-            accStartBar := na
-            lockBar := na
-            sweepBar := na
-            distBar := na
-            rangeHigh := na
-            rangeLow := na
-            sweepDir := 0
-            accStreak := 0
-            accBox := na
-            rangeHighLine := na
-            rangeLowLine := na
+        if st.phase == 4 and st.accStreak >= minAccBars
+            st := f_state_reset(st)
 
     // No continuous line updates: keep drawings anchored to their creation bars.
 
 // === Visuals ===
-bool inDistState = phase == 4
-bgcolor(showDistTint and inDistState ? color.new(sweepDir == -1 ? #00ff88 : #ff3366, 92) : na)
+bool inDistState = st.phase == 4
+bgcolor(showDistTint and inDistState ? color.new(st.sweepDir == -1 ? #00ff88 : #ff3366, 92) : na)
 
 // === Alerts ===
 alertcondition(alertRangeLocked and evRangeLocked, title="AMD: Range Locked", message="AMD range locked on {{ticker}} {{interval}}")
