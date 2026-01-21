@@ -1,0 +1,264 @@
+//@version=6
+indicator("Pagani AMD / PO3", overlay=true, max_boxes_count=20, max_labels_count=50)
+
+groupPreset = "Presets"
+presetMode = input.string("Institutional (Strict)", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
+     tooltip="Institutional: fewer, higher-quality phase shifts.\nBalanced: defaults.\nAggressive: more signals.\nManual: use all inputs as-is.")
+
+groupSess = "Sessions (Optional Filter)"
+tzInput = input.string("America/New_York", "Timezone", group=groupSess)
+useSessionFilterInput = input.bool(true, "Use Session Filter", group=groupSess,
+     tooltip="If enabled, Manipulation/Distribution triggers are only allowed inside the configured session windows.\nFor crypto, this is a liquidity filter (not a requirement).")
+accSessionInput = input.session("2000-0000", "Accumulation Window", group=groupSess)
+manSessionInput = input.session("0000-0300", "Manipulation Window", group=groupSess)
+distSessionInput = input.session("0300-0800", "Distribution Window", group=groupSess)
+
+groupDet = "Detection"
+signalTimingInput = input.string("Confirmed (bar close)", "Signal Timing", options=["Confirmed (bar close)", "Realtime (intrabar)"], group=groupDet)
+
+atrLenInput = input.int(14, "ATR Length", minval=1, group=groupDet)
+regimeLenInput = input.int(100, "Regime Length", minval=10, group=groupDet)
+lowVolMultInput = input.float(0.75, "Low Vol Threshold (x ATR MA)", minval=0.1, maxval=2.0, step=0.05, group=groupDet)
+
+rangeLenInput = input.int(30, "Range Lookback (bars)", minval=10, group=groupDet)
+rangeAtrMultInput = input.float(1.2, "Max Range (x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupDet)
+minRangePctInput = input.float(0.03, "Min Range (% of price)", minval=0.0, maxval=2.0, step=0.01, group=groupDet,
+     tooltip="Multi-asset guardrail: prevents the range threshold from becoming too small on low-ATR markets.")
+
+minAccBarsInput = input.int(12, "Min Accumulation Bars", minval=5, maxval=200, group=groupDet)
+
+requireCloseBackInput = input.bool(true, "Sweep Requires Close Back Inside", group=groupDet)
+maxBarsToSweepInput = input.int(120, "Max Bars To Sweep After Acc", minval=10, maxval=2000, group=groupDet)
+
+dispAtrMultInput = input.float(1.2, "Displacement (Body x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupDet)
+minBodyPctTrInput = input.float(0.55, "Displacement (Body / TR)", minval=0.1, maxval=1.0, step=0.05, group=groupDet)
+requireFvgInput = input.bool(true, "Require FVG Confirmation", group=groupDet)
+fvgMinAtrInput = input.float(0.15, "Min FVG (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupDet)
+maxBarsToDistributeInput = input.int(240, "Max Bars To Distribute After Sweep", minval=10, maxval=5000, group=groupDet)
+
+groupVis = "Visuals"
+showAccBoxInput = input.bool(true, "Show Accumulation Box", group=groupVis)
+showRangeLinesInput = input.bool(true, "Show Range High/Low", group=groupVis)
+showMarkersInput = input.bool(true, "Show M/D Markers", group=groupVis)
+showDistTintInput = input.bool(true, "Tint Distribution", group=groupVis)
+
+groupAlerts = "Alerts"
+alertRangeLockedInput = input.bool(true, "Alert: Range Locked", group=groupAlerts)
+alertSweepInput = input.bool(true, "Alert: Manipulation Sweep", group=groupAlerts)
+alertDistInput = input.bool(true, "Alert: Distribution Started", group=groupAlerts)
+
+bool useSessionFilter = presetMode == "Institutional (Strict)" ? true : useSessionFilterInput
+string signalTiming = presetMode == "Institutional (Strict)" ? "Confirmed (bar close)" : signalTimingInput
+
+int atrLen = presetMode == "Aggressive" ? math.max(atrLenInput, 10) : atrLenInput
+int regimeLen = presetMode == "Institutional (Strict)" ? math.max(regimeLenInput, 150) : presetMode == "Aggressive" ? math.max(regimeLenInput, 60) : regimeLenInput
+float lowVolMult = presetMode == "Institutional (Strict)" ? math.min(lowVolMultInput, 0.65) : presetMode == "Aggressive" ? math.max(lowVolMultInput, 0.85) : lowVolMultInput
+
+int rangeLen = presetMode == "Institutional (Strict)" ? math.max(rangeLenInput, 40) : presetMode == "Aggressive" ? math.max(rangeLenInput, 20) : rangeLenInput
+float rangeAtrMult = presetMode == "Institutional (Strict)" ? math.min(rangeAtrMultInput, 1.0) : presetMode == "Aggressive" ? math.max(rangeAtrMultInput, 1.6) : rangeAtrMultInput
+float minRangePct = presetMode == "Institutional (Strict)" ? math.min(minRangePctInput, 0.02) : presetMode == "Aggressive" ? math.max(minRangePctInput, 0.06) : minRangePctInput
+int minAccBars = presetMode == "Institutional (Strict)" ? math.max(minAccBarsInput, 16) : presetMode == "Aggressive" ? math.max(minAccBarsInput, 8) : minAccBarsInput
+
+bool requireCloseBack = presetMode == "Institutional (Strict)" ? true : requireCloseBackInput
+int maxBarsToSweep = presetMode == "Institutional (Strict)" ? math.min(maxBarsToSweepInput, 90) : presetMode == "Aggressive" ? math.max(maxBarsToSweepInput, 240) : maxBarsToSweepInput
+
+float dispAtrMult = presetMode == "Institutional (Strict)" ? math.max(dispAtrMultInput, 1.6) : presetMode == "Aggressive" ? math.max(dispAtrMultInput, 1.0) : dispAtrMultInput
+float minBodyPctTr = presetMode == "Institutional (Strict)" ? math.max(minBodyPctTrInput, 0.65) : presetMode == "Aggressive" ? math.max(minBodyPctTrInput, 0.45) : minBodyPctTrInput
+bool requireFvg = presetMode == "Institutional (Strict)" ? true : requireFvgInput
+float fvgMinAtr = presetMode == "Institutional (Strict)" ? math.max(fvgMinAtrInput, 0.20) : presetMode == "Aggressive" ? math.max(fvgMinAtrInput, 0.05) : fvgMinAtrInput
+int maxBarsToDistribute = presetMode == "Institutional (Strict)" ? math.min(maxBarsToDistributeInput, 180) : presetMode == "Aggressive" ? math.max(maxBarsToDistributeInput, 360) : maxBarsToDistributeInput
+
+bool showAccBox = showAccBoxInput
+bool showRangeLines = showRangeLinesInput
+bool showMarkers = showMarkersInput
+bool showDistTint = showDistTintInput
+
+bool alertRangeLocked = presetMode == "Institutional (Strict)" ? true : alertRangeLockedInput
+bool alertSweep = presetMode == "Institutional (Strict)" ? true : alertSweepInput
+bool alertDist = presetMode == "Institutional (Strict)" ? true : alertDistInput
+
+bool shouldUpdate = signalTiming == "Realtime (intrabar)" or barstate.isconfirmed
+
+string days = "1234567"
+string accStr = accSessionInput + ":" + days
+string manStr = manSessionInput + ":" + days
+string distStr = distSessionInput + ":" + days
+
+bool inAcc = not na(time(timeframe.period, accStr, tzInput))
+bool inMan = not na(time(timeframe.period, manStr, tzInput))
+bool inDist = not na(time(timeframe.period, distStr, tzInput))
+
+float atr = ta.atr(atrLen)
+float atrMa = ta.sma(atr, regimeLen)
+float tr = ta.tr(true)
+
+float rangeHighRoll = ta.highest(high, rangeLen)
+float rangeLowRoll = ta.lowest(low, rangeLen)
+float rangeWidthRoll = rangeHighRoll - rangeLowRoll
+float rangeMinFloor = close * (minRangePct / 100.0)
+float rangeMax = math.max(atr * rangeAtrMult, rangeMinFloor)
+bool lowVol = not na(atrMa) and atr < atrMa * lowVolMult
+bool tightRange = rangeWidthRoll <= rangeMax
+
+bool accCond = lowVol and tightRange
+
+// === Phase state ===
+// 0: idle, 1: accumulation (building), 2: range locked (waiting sweep), 3: sweep confirmed (waiting distribution), 4: distribution
+var int phase = 0
+var int accStartBar = na
+var int lockBar = na
+var int sweepBar = na
+var int distBar = na
+var float rangeHigh = na
+var float rangeLow = na
+var int sweepDir = 0
+
+var box accBox = na
+var line rangeHighLine = na
+var line rangeLowLine = na
+
+var int accStreak = 0
+
+bool allowManNow = not useSessionFilter or inMan
+bool allowDistNow = not useSessionFilter or inDist
+
+// Events (one-bar pulses)
+bool evRangeLocked = false
+bool evSweepUp = false
+bool evSweepDown = false
+bool evDistUp = false
+bool evDistDown = false
+
+evRangeLocked := false
+evSweepUp := false
+evSweepDown := false
+evDistUp := false
+evDistDown := false
+
+resetAll() =>
+    phase := 0
+    accStartBar := na
+    lockBar := na
+    sweepBar := na
+    distBar := na
+    rangeHigh := na
+    rangeLow := na
+    sweepDir := 0
+    accStreak := 0
+    if not na(accBox)
+        box.delete(accBox)
+        accBox := na
+    if not na(rangeHighLine)
+        line.delete(rangeHighLine)
+        rangeHighLine := na
+    if not na(rangeLowLine)
+        line.delete(rangeLowLine)
+        rangeLowLine := na
+
+if shouldUpdate
+    // Track consecutive bars meeting accumulation regime.
+    accStreak := accCond ? accStreak + 1 : 0
+
+    // Reset if we somehow lose required series early on.
+    if na(atr) or na(rangeHighRoll) or na(rangeLowRoll)
+        resetAll()
+    else
+        // Start accumulation once regime holds long enough.
+        if phase == 0 and accStreak >= minAccBars
+            phase := 1
+            accStartBar := bar_index - minAccBars + 1
+            rangeHigh := ta.highest(high, minAccBars)
+            rangeLow := ta.lowest(low, minAccBars)
+            lockBar := na
+            sweepBar := na
+            distBar := na
+            sweepDir := 0
+            if not na(accBox)
+                box.delete(accBox)
+            accBox := na
+            if showAccBox
+                accBox := box.new(accStartBar, rangeHigh, bar_index, rangeLow, xloc=xloc.bar_index, bgcolor=color.new(color.gray, 90), border_color=color.new(color.gray, 40), border_width=1)
+
+        // While accumulating, keep expanding the range.
+        if phase == 1
+            rangeHigh := math.max(rangeHigh, high)
+            rangeLow := math.min(rangeLow, low)
+            if showAccBox and not na(accBox)
+                box.set_lefttop(accBox, accStartBar, rangeHigh)
+                box.set_rightbottom(accBox, bar_index, rangeLow)
+
+            // Lock the range when the low-vol regime breaks.
+            if not accCond
+                phase := 2
+                lockBar := bar_index
+                evRangeLocked := true
+
+                if showRangeLines
+                    if not na(rangeHighLine)
+                        line.delete(rangeHighLine)
+                    if not na(rangeLowLine)
+                        line.delete(rangeLowLine)
+                    rangeHighLine := line.new(bar_index, rangeHigh, bar_index + 1, rangeHigh, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.gray, 30), width=1)
+                    rangeLowLine := line.new(bar_index, rangeLow, bar_index + 1, rangeLow, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.gray, 30), width=1)
+
+        // Waiting for sweep.
+        if phase == 2
+            bool timeOk = not na(lockBar) and bar_index - lockBar <= maxBarsToSweep
+            if not timeOk
+                resetAll()
+            else if allowManNow
+                bool sweptUp = high > rangeHigh
+                bool sweptDown = low < rangeLow
+                bool closeBackUp = not requireCloseBack or close < rangeHigh
+                bool closeBackDown = not requireCloseBack or close > rangeLow
+                bool manUp = sweptUp and closeBackUp
+                bool manDown = sweptDown and closeBackDown
+
+                if manUp or manDown
+                    phase := 3
+                    sweepBar := bar_index
+                    sweepDir := manUp ? 1 : -1
+                    evSweepUp := manUp
+                    evSweepDown := manDown
+
+        // Waiting for distribution confirmation.
+        if phase == 3
+            bool timeOk = not na(sweepBar) and bar_index - sweepBar <= maxBarsToDistribute
+            if not timeOk
+                resetAll()
+            else if allowDistNow
+                int expectedDir = -sweepDir
+                float body = math.abs(close - open)
+                bool disp = body >= dispAtrMult * atr and (tr > 0 ? (body / tr) : 0) >= minBodyPctTr
+
+                bool dirOk = expectedDir == 1 ? close > open : close < open
+
+                bool bullFvg = low > high[2] and (low - high[2]) >= fvgMinAtr * atr
+                bool bearFvg = high < low[2] and (low[2] - high) >= fvgMinAtr * atr
+                bool fvgOk = not requireFvg or (expectedDir == 1 ? bullFvg : bearFvg)
+
+                if disp and dirOk and fvgOk
+                    phase := 4
+                    distBar := bar_index
+                    evDistUp := expectedDir == 1
+                    evDistDown := expectedDir == -1
+
+        // Distribution phase: ends when a new accumulation regime starts.
+        if phase == 4 and accStreak >= minAccBars
+            resetAll()
+
+// === Visuals ===
+plotshape(showMarkers and evSweepUp, title="M Sweep Up", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="M", textcolor=color.white)
+plotshape(showMarkers and evSweepDown, title="M Sweep Down", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="M", textcolor=color.black)
+plotshape(showMarkers and evDistUp, title="D Up", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="D", textcolor=color.black)
+plotshape(showMarkers and evDistDown, title="D Down", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="D", textcolor=color.white)
+
+bool inDistState = phase == 4
+bgcolor(showDistTint and inDistState ? color.new(sweepDir == -1 ? #00ff88 : #ff3366, 92) : na)
+
+// === Alerts ===
+alertcondition(alertRangeLocked and evRangeLocked, title="AMD: Range Locked", message="AMD range locked on {{ticker}} {{interval}}")
+alertcondition(alertSweep and evSweepUp, title="AMD: Manipulation Sweep Up", message="AMD manipulation sweep UP on {{ticker}} {{interval}}")
+alertcondition(alertSweep and evSweepDown, title="AMD: Manipulation Sweep Down", message="AMD manipulation sweep DOWN on {{ticker}} {{interval}}")
+alertcondition(alertDist and evDistUp, title="AMD: Distribution Started Up", message="AMD distribution started UP on {{ticker}} {{interval}}")
+alertcondition(alertDist and evDistDown, title="AMD: Distribution Started Down", message="AMD distribution started DOWN on {{ticker}} {{interval}}")
