@@ -271,6 +271,13 @@ if shouldUpdate
                     sweepDir := manUp ? 1 : -1
                     evSweepUp := manUp
                     evSweepDown := manDown
+                    
+                    // Create sweep labels immediately when event occurs
+                    if showMarkers
+                        if manUp
+                            label.new(bar_index, high, "M", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#ff3366, 0), style=label.style_label_down, textcolor=color.white, size=size.small)
+                        else  
+                            label.new(bar_index, low, "M", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#00ff88, 0), style=label.style_label_up, textcolor=chartIsDark ? color.white : color.black, size=size.small)
 
         // Waiting for distribution confirmation.
         if phase == 3
@@ -308,6 +315,13 @@ if shouldUpdate
                     distBar := bar_index
                     evDistUp := expectedDir == 1
                     evDistDown := expectedDir == -1
+                    
+                    // Create distribution labels immediately when event occurs
+                    if showMarkers
+                        if expectedDir == 1
+                            label.new(bar_index, low, "D", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#00ff88, 0), style=label.style_label_up, textcolor=chartIsDark ? color.white : color.black, size=size.small)
+                        else
+                            label.new(bar_index, high, "D", xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#ff3366, 0), style=label.style_label_down, textcolor=color.white, size=size.small)
 
         // Distribution phase: ends when a new accumulation regime starts.
         if phase == 4 and accStreak >= minAccBars
@@ -328,11 +342,6 @@ if shouldUpdate
     // No continuous line updates: keep drawings anchored to their creation bars.
 
 // === Visuals ===
-plotshape(showMarkers and evSweepUp, title="M Sweep Up", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="M", textcolor=color.white)
-plotshape(showMarkers and evSweepDown, title="M Sweep Down", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="M", textcolor=chartIsDark ? color.white : color.black)
-plotshape(showMarkers and evDistUp, title="D Up", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(#00ff88, 0), text="D", textcolor=chartIsDark ? color.white : color.black)
-plotshape(showMarkers and evDistDown, title="D Down", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(#ff3366, 0), text="D", textcolor=color.white)
-
 bool inDistState = phase == 4
 bgcolor(showDistTint and inDistState ? color.new(sweepDir == -1 ? #00ff88 : #ff3366, 92) : na)
 
