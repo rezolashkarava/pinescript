@@ -1,0 +1,215 @@
+//@version=6
+indicator("Parabolic Exhaustion Signals", overlay=true, max_labels_count=100)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+groupSettings = "Signal Settings"
+signalMode = input.string("Strict (4+ conditions)", "Signal Quality", 
+     options=["Strict (4+ conditions)", "Balanced (3+ conditions)", "Aggressive (2+ conditions)"], 
+     group=groupSettings,
+     tooltip="Strict = fewer but higher quality signals\nBalanced = recommended\nAggressive = more signals but more false positives")
+
+groupROC = "ROC Extreme Detection"
+rocPeriod = input.int(12, "ROC Period", minval=5, maxval=50, group=groupROC)
+rocPercentileLookback = input.int(200, "Percentile Lookback", minval=50, maxval=500, group=groupROC)
+rocExtremeThreshold = input.float(90.0, "Extreme Threshold (%)", minval=70.0, maxval=99.0, step=1.0, group=groupROC,
+     tooltip="ROC must be in top/bottom X% to trigger. 90 = very extreme, 95 = ultra extreme")
+
+groupDiv = "Divergence Detection"
+rsiPeriod = input.int(14, "RSI Period", minval=5, maxval=50, group=groupDiv)
+divLookback = input.int(25, "Divergence Lookback", minval=10, maxval=50, group=groupDiv)
+
+groupAC = "Acceleration Oscillator"
+acFast = input.int(5, "AO Fast Period", minval=3, maxval=20, group=groupAC)
+acSlow = input.int(34, "AO Slow Period", minval=10, maxval=100, group=groupAC)
+acSmooth = input.int(5, "AC Smoothing", minval=3, maxval=10, group=groupAC)
+
+groupVol = "Volume Exhaustion"
+volPeriod = input.int(20, "Volume MA Period", minval=10, maxval=100, group=groupVol)
+volSpikeThreshold = input.float(1.8, "Spike Threshold (x Avg)", minval=1.2, maxval=3.0, step=0.1, group=groupVol,
+     tooltip="Volume must exceed this multiple of average to count as spike")
+
+groupVis = "Display"
+showLabels = input.bool(true, "Show Signal Labels", group=groupVis)
+showConditionCount = input.bool(false, "Show Condition Count", group=groupVis,
+     tooltip="Display how many conditions were met (for debugging)")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNAL THRESHOLD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int minConditions = signalMode == "Strict (4+ conditions)" ? 4 : 
+     signalMode == "Balanced (3+ conditions)" ? 3 : 2
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. ROC EXTREME DETECTION (Percentile Rank)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+roc = 100 * (close - close[rocPeriod]) / close[rocPeriod]
+
+// Calculate percentile rank
+rocPercentile = ta.percentrank(roc, rocPercentileLookback)
+
+// Extreme conditions
+bool rocBullishExtreme = rocPercentile <= (100 - rocExtremeThreshold)  // Bottom percentile
+bool rocBearishExtreme = rocPercentile >= rocExtremeThreshold          // Top percentile
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. RSI & MACD DIVERGENCE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+rsi = ta.rsi(close, rsiPeriod)
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+
+// Find pivot highs and lows
+pivotHigh = ta.pivothigh(close, 5, 5)
+pivotLow = ta.pivotlow(close, 5, 5)
+
+// Bullish divergence detection (price lower low, indicator higher low)
+var float lastPriceLow = na
+var float lastRsiLow = na
+var float lastMacdLow = na
+var int lastLowBar = na
+
+if not na(pivotLow)
+    if not na(lastPriceLow) and close < lastPriceLow
+        lastPriceLow := close
+        lastRsiLow := rsi
+        lastMacdLow := macdLine
+        lastLowBar := bar_index
+    else
+        lastPriceLow := close
+        lastRsiLow := rsi
+        lastMacdLow := macdLine
+        lastLowBar := bar_index
+
+bool rsiBullDiv = false
+bool macdBullDiv = false
+
+if not na(pivotLow) and not na(lastPriceLow) and not na(lastLowBar)
+    if bar_index - lastLowBar <= divLookback and bar_index - lastLowBar > 2
+        if close < lastPriceLow and rsi > lastRsiLow
+            rsiBullDiv := true
+        if close < lastPriceLow and macdLine > lastMacdLow
+            macdBullDiv := true
+
+// Bearish divergence detection (price higher high, indicator lower high)
+var float lastPriceHigh = na
+var float lastRsiHigh = na
+var float lastMacdHigh = na
+var int lastHighBar = na
+
+if not na(pivotHigh)
+    if not na(lastPriceHigh) and close > lastPriceHigh
+        lastPriceHigh := close
+        lastRsiHigh := rsi
+        lastMacdHigh := macdLine
+        lastHighBar := bar_index
+    else
+        lastPriceHigh := close
+        lastRsiHigh := rsi
+        lastMacdHigh := macdLine
+        lastHighBar := bar_index
+
+bool rsiBearDiv = false
+bool macdBearDiv = false
+
+if not na(pivotHigh) and not na(lastPriceHigh) and not na(lastHighBar)
+    if bar_index - lastHighBar <= divLookback and bar_index - lastHighBar > 2
+        if close > lastPriceHigh and rsi < lastRsiHigh
+            rsiBearDiv := true
+        if close > lastPriceHigh and macdLine < lastMacdHigh
+            macdBearDiv := true
+
+bool bullishDivergence = rsiBullDiv or macdBullDiv
+bool bearishDivergence = rsiBearDiv or macdBearDiv
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. ACCELERATION OSCILLATOR (Second Derivative)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+medianPrice = hl2
+ao = ta.sma(medianPrice, acFast) - ta.sma(medianPrice, acSlow)
+ac = ao - ta.sma(ao, acSmooth)
+
+// Deceleration signals (momentum slowing before reversal)
+bool acBullishDecel = ac < 0 and ac > ac[1] and ac[1] > ac[2]  // Turning up from negative
+bool acBearishDecel = ac > 0 and ac < ac[1] and ac[1] < ac[2]  // Turning down from positive
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. VOLUME EXHAUSTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+volMa = ta.sma(volume, volPeriod)
+volSpike = volume > volMa * volSpikeThreshold
+
+// Volume declining after spike (exhaustion pattern)
+bool volExhaustion = volSpike[1] and volume < volume[1]
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. COMPOSITE SIGNAL GENERATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Count bullish conditions
+int bullishScore = 0
+if rocBullishExtreme
+    bullishScore += 1
+if bullishDivergence
+    bullishScore += 1
+if acBullishDecel
+    bullishScore += 1
+if volExhaustion and close < open  // Bearish candle with volume exhaustion suggests reversal up
+    bullishScore += 1
+
+// Count bearish conditions
+int bearishScore = 0
+if rocBearishExtreme
+    bearishScore += 1
+if bearishDivergence
+    bearishScore += 1
+if acBearishDecel
+    bearishScore += 1
+if volExhaustion and close > open  // Bullish candle with volume exhaustion suggests reversal down
+    bearishScore += 1
+
+// Generate signals only when enough conditions align
+bool longSignal = bullishScore >= minConditions
+bool shortSignal = bearishScore >= minConditions
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUAL SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Plot signals as shapes
+plotshape(longSignal, title="LONG", style=shape.triangleup, location=location.belowbar, 
+     color=color.new(#00ff88, 0), size=size.normal)
+plotshape(shortSignal, title="SHORT", style=shape.triangledown, location=location.abovebar, 
+     color=color.new(#ff3366, 0), size=size.normal)
+
+// Optional: Labels with details
+if showLabels and longSignal
+    label.new(bar_index, low, 
+         text="LONG" + (showConditionCount ? "\n" + str.tostring(bullishScore) + "/" + str.tostring(minConditions) : ""), 
+         style=label.style_label_up, 
+         color=color.new(#00ff88, 0), 
+         textcolor=color.white,
+         size=size.normal)
+
+if showLabels and shortSignal
+    label.new(bar_index, high, 
+         text="SHORT" + (showConditionCount ? "\n" + str.tostring(bearishScore) + "/" + str.tostring(minConditions) : ""), 
+         style=label.style_label_down, 
+         color=color.new(#ff3366, 0), 
+         textcolor=color.white,
+         size=size.normal)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(longSignal, title="Parabolic Exhaustion LONG", 
+     message="LONG signal: {{ticker}} {{interval}} - Parabolic exhaustion reversal detected")
+alertcondition(shortSignal, title="Parabolic Exhaustion SHORT", 
+     message="SHORT signal: {{ticker}} {{interval}} - Parabolic exhaustion reversal detected")
