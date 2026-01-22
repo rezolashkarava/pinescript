@@ -111,6 +111,16 @@ cooldownBarsInput = input.int(8, "Signal Cooldown (bars, Base: 15m)", minval=0, 
 minPriceMoveInput = input.float(2.2, "Min Price Move (x ATR)", minval=0.5, maxval=10.0, step=0.2, group=groupFilters,
      tooltip="Base: 2.2 - needs meaningful move before reversal")
 
+confirmationMode = input.string("Sweep Closeback", "Spike Confirmation",
+     options=["Off", "Sweep Closeback"],
+     group=groupFilters,
+     tooltip="Off: no structure confirmation\nSweep Closeback: require sweep of recent high/low and close back inside (reduces fading continuation spikes)")
+sweepLookbackInput = input.int(20, "Sweep Lookback (Base: 15m)", minval=10, maxval=200, group=groupFilters,
+     tooltip="Base: 20 bars on 15m (~5 hours). Auto-mode scales this")
+
+requireFollowThrough = input.bool(true, "Require Follow-Through Bar", group=groupFilters,
+     tooltip="If Spike Confirmation is enabled, require the next bar to break the reversal bar's high (LONG) / low (SHORT)")
+
 requireBothCore = input.bool(true, "Require BOTH Velocity + Reversal Candle", group=groupFilters,
      tooltip="Recommended: ON for quality signals")
 
@@ -121,6 +131,7 @@ priceExtremeLookbackInput = input.int(40, "Price Extreme Lookback (Base: 15m)", 
 int cooldownBars = autoAdaptive ? int(math.max(0, math.round(cooldownBarsInput * tfMultiplier))) : cooldownBarsInput
 float minPriceMove = autoAdaptive ? minPriceMoveInput * thresholdMultiplier : minPriceMoveInput
 int priceExtremeLookback = autoAdaptive ? int(math.max(20, math.round(priceExtremeLookbackInput * tfMultiplier))) : priceExtremeLookbackInput
+int sweepLookback = autoAdaptive ? int(math.max(10, math.round(sweepLookbackInput * tfMultiplier))) : sweepLookbackInput
 
 useVolatilityFilter = input.bool(true, "Require Active Market (Volatility Filter)", group=groupFilters,
      tooltip="Blocks signals during low-volatility ranging markets")
@@ -251,6 +262,16 @@ float priceLow = ta.lowest(low, priceExtremeLookback)
 bool nearHighExtreme = high >= priceHigh * 0.997  // Within 0.3% of high
 bool nearLowExtreme = low <= priceLow * 1.003     // Within 0.3% of low
 
+// Structure confirmation: sweep a recent extreme and close back inside.
+float sweepHigh = ta.highest(high, sweepLookback)[1]
+float sweepLow = ta.lowest(low, sweepLookback)[1]
+bool sweepShort = not na(sweepHigh) and high > sweepHigh and close < sweepHigh
+bool sweepLong = not na(sweepLow) and low < sweepLow and close > sweepLow
+bool spikeConfirmLongOk = confirmationMode == "Off" or sweepLong
+bool spikeConfirmShortOk = confirmationMode == "Off" or sweepShort
+
+bool useFollowThrough = confirmationMode == "Sweep Closeback" and requireFollowThrough
+
 // Volatility filter - check if we're in an active market
 float atrSma = ta.sma(atr, 50)
 float atrRatio = atrSma > 0 ? atr / atrSma : 0  // Current ATR vs long-term average
@@ -317,8 +338,63 @@ int shortConfidence = shortScore >= 5 ? 3 : shortScore == 4 ? 2 : shortScore == 
 bool longCoreOk = not requireBothCore or (longHasVelocity and longHasCandle)
 bool shortCoreOk = not requireBothCore or (shortHasVelocity and shortHasCandle)
 
-bool longSignalRaw = longScore >= minScoreRequired and longCoreOk and volatilityOk and longConfidence > 0
-bool shortSignalRaw = shortScore >= minScoreRequired and shortCoreOk and volatilityOk and shortConfidence > 0
+bool longSetupRaw = longScore >= minScoreRequired and longCoreOk and volatilityOk and longConfidence > 0 and spikeConfirmLongOk
+bool shortSetupRaw = shortScore >= minScoreRequired and shortCoreOk and volatilityOk and shortConfidence > 0 and spikeConfirmShortOk
+
+var int pendingLongBar = na
+var float pendingLongBreak = na
+var int pendingLongScore = na
+var int pendingLongConfidence = na
+
+var int pendingShortBar = na
+var float pendingShortBreak = na
+var int pendingShortScore = na
+var int pendingShortConfidence = na
+
+bool longFollowTrigger = useFollowThrough and not na(pendingLongBar) and bar_index == pendingLongBar + 1 and high > pendingLongBreak
+bool shortFollowTrigger = useFollowThrough and not na(pendingShortBar) and bar_index == pendingShortBar + 1 and low < pendingShortBreak
+
+bool longSignalRaw = useFollowThrough ? longFollowTrigger : longSetupRaw
+bool shortSignalRaw = useFollowThrough ? shortFollowTrigger : shortSetupRaw
+
+int longScoreUsed = longFollowTrigger ? pendingLongScore : longScore
+int shortScoreUsed = shortFollowTrigger ? pendingShortScore : shortScore
+int longConfidenceUsed = longFollowTrigger ? pendingLongConfidence : longConfidence
+int shortConfidenceUsed = shortFollowTrigger ? pendingShortConfidence : shortConfidence
+
+if useFollowThrough
+    if longFollowTrigger
+        pendingLongBar := na
+        pendingLongBreak := na
+        pendingLongScore := na
+        pendingLongConfidence := na
+    if shortFollowTrigger
+        pendingShortBar := na
+        pendingShortBreak := na
+        pendingShortScore := na
+        pendingShortConfidence := na
+
+    if not na(pendingLongBar) and bar_index > pendingLongBar + 1
+        pendingLongBar := na
+        pendingLongBreak := na
+        pendingLongScore := na
+        pendingLongConfidence := na
+    if not na(pendingShortBar) and bar_index > pendingShortBar + 1
+        pendingShortBar := na
+        pendingShortBreak := na
+        pendingShortScore := na
+        pendingShortConfidence := na
+
+    if longSetupRaw
+        pendingLongBar := bar_index
+        pendingLongBreak := high
+        pendingLongScore := longScore
+        pendingLongConfidence := longConfidence
+    if shortSetupRaw
+        pendingShortBar := bar_index
+        pendingShortBreak := low
+        pendingShortScore := shortScore
+        pendingShortConfidence := shortConfidence
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 7. FILTERS
@@ -327,8 +403,8 @@ bool shortSignalRaw = shortScore >= minScoreRequired and shortCoreOk and volatil
 var int lastSignalBar = na
 bool cooldownOk = cooldownBars == 0 or na(lastSignalBar) or (bar_index - lastSignalBar) > cooldownBars
 
-bool longSignal = longSignalRaw and cooldownOk and longScore > shortScore
-bool shortSignal = shortSignalRaw and cooldownOk and shortScore > longScore
+bool longSignal = longSignalRaw and cooldownOk and longScoreUsed > shortScoreUsed
+bool shortSignal = shortSignalRaw and cooldownOk and shortScoreUsed > longScoreUsed
 
 if longSignal or shortSignal
     lastSignalBar := bar_index
@@ -356,13 +432,13 @@ color longTextColor = color.new(#FFFFFF, 0)   // White on dark green
 color shortTextColor = color.new(#FFFFFF, 0)  // White on dark red
 
 // Determine which confidence level triggered
-bool longL3 = longSignal and longConfidence == 3
-bool longL2 = longSignal and longConfidence == 2
-bool longL1 = longSignal and longConfidence == 1
+bool longL3 = longSignal and longConfidenceUsed == 3
+bool longL2 = longSignal and longConfidenceUsed == 2
+bool longL1 = longSignal and longConfidenceUsed == 1
 
-bool shortS3 = shortSignal and shortConfidence == 3
-bool shortS2 = shortSignal and shortConfidence == 2
-bool shortS1 = shortSignal and shortConfidence == 1
+bool shortS3 = shortSignal and shortConfidenceUsed == 3
+bool shortS2 = shortSignal and shortConfidenceUsed == 2
+bool shortS1 = shortSignal and shortConfidenceUsed == 1
 
 // Triangles with confidence colors
 plotshape(showTriangles and longL3, title="L3 ▲", style=shape.triangleup, location=location.belowbar,
@@ -382,12 +458,12 @@ plotshape(showTriangles and shortS1, title="S1 ▼", style=shape.triangledown, l
 // Confidence-based text labels
 if showLabels
     if longSignal
-        color longLabelColor = longConfidence == 3 ? longColorL3 : longConfidence == 2 ? longColorL2 : longColorL1
-        label.new(bar_index, low, text="L" + str.tostring(longConfidence), style=label.style_label_up,
+        color longLabelColor = longConfidenceUsed == 3 ? longColorL3 : longConfidenceUsed == 2 ? longColorL2 : longColorL1
+        label.new(bar_index, low, text="L" + str.tostring(longConfidenceUsed), style=label.style_label_up,
              color=longLabelColor, textcolor=longTextColor, size=size.small)
     if shortSignal
-        color shortLabelColor = shortConfidence == 3 ? shortColorS3 : shortConfidence == 2 ? shortColorS2 : shortColorS1
-        label.new(bar_index, high, text="S" + str.tostring(shortConfidence), style=label.style_label_down,
+        color shortLabelColor = shortConfidenceUsed == 3 ? shortColorS3 : shortConfidenceUsed == 2 ? shortColorS2 : shortColorS1
+        label.new(bar_index, high, text="S" + str.tostring(shortConfidenceUsed), style=label.style_label_down,
              color=shortLabelColor, textcolor=shortTextColor, size=size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
