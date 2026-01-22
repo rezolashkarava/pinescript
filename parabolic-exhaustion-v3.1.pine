@@ -1,5 +1,5 @@
 //@version=6
-indicator("Parabolic Exhaustion V3 [Multi-Timeframe]", overlay=true, max_labels_count=100)
+indicator("Parabolic Exhaustion [Pagani] v3.1", overlay=true, max_labels_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE CONCEPT: Catch parabolic tops/bottoms with CONFIDENCE LEVELS
@@ -45,144 +45,105 @@ float thresholdMultiplier =
      tfMinutes <= 60 ? 0.95 :    // 1h: Slightly lower
      0.9                          // 4h+: Lower thresholds (less strict)
 
-groupTF = "⚙️ Timeframe Mode"
-autoAdaptive = input.bool(true, "Auto-Adaptive Mode", group=groupTF,
-     tooltip="ON = Automatically adjusts all parameters for current timeframe\nOFF = Use manual settings below")
+// ═══════════════════════════════════════════════════════════════════════════════
+// USER SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
 
-groupSettings = "Signal Settings"
-minConfidenceLevel = input.string("L2/S2 (Medium)", "Minimum Confidence Level", 
+groupMain = "📊 Main Settings"
+autoAdaptive = input.bool(true, "Auto-Adaptive (Recommended)", group=groupMain,
+     tooltip="Automatically adjusts all parameters based on your chart timeframe")
+
+minConfidenceLevel = input.string("L2/S2 (Medium)", "Minimum Signal Quality", 
      options=["L3/S3 (High only)", "L2/S2 (Medium)", "L1/S1 (All signals)"], 
-     group=groupSettings,
-     tooltip="L3/S3 = 5+ points (best quality)\nL2/S2 = 4 points (balanced)\nL1/S1 = 3 points (aggressive)")
+     group=groupMain,
+     tooltip="L3/S3 = Highest quality, fewer signals\nL2/S2 = Balanced (recommended)\nL1/S1 = More signals, lower quality")
 
-groupVelocity = "Velocity Detection"
-velocityPeriodInput = input.int(5, "Velocity Period (Base: 15m)", minval=2, maxval=50, group=groupVelocity,
-     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
-velocityThresholdInput = input.float(2.0, "Velocity Threshold (x ATR)", minval=1.0, maxval=10.0, step=0.1, group=groupVelocity,
-     tooltip="Base: 1.8-2.2 for 15m timeframe")
-atrPeriodInput = input.int(14, "ATR Period (Base: 15m)", minval=5, maxval=100, group=groupVelocity,
-     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
+entryModel = input.string("BOS + Retest (Strict)", "Entry Timing",
+     options=["Setup (Aggressive)", "BOS (Close Confirm)", "BOS + Retest (Strict)"],
+     group=groupMain,
+     tooltip="Setup = Immediate signals (fastest, most false signals)\nBOS = Wait for price to break setup level (balanced)\nBOS + Retest = Wait for break and retest (slowest, highest precision)")
+
+groupFilters = "🎯 Filters"
+useRegimeFilter = input.bool(true, "Trend Filter (1H)", group=groupFilters,
+     tooltip="Blocks counter-trend signals during strong 1H trends")
+
+useVolatilityFilter = input.bool(true, "Volatility Filter", group=groupFilters,
+     tooltip="Blocks signals during low-volatility ranging markets")
+
+confirmationMode = input.string("Sweep Closeback", "Structure Confirmation",
+     options=["Off", "Sweep Closeback"],
+     group=groupFilters,
+     tooltip="Sweep Closeback = Requires price to sweep a recent high/low and close back inside (recommended)")
+
+groupDisplay = "🎨 Display"
+signalStyle = input.string("Labels with Confidence", "Signal Style", 
+     options=["Triangles Only", "Labels with Confidence", "Both"], 
+     group=groupDisplay)
+
+showSetupMarkers = input.bool(true, "Show Setup Markers", group=groupDisplay,
+     tooltip="Shows where exhaustion setup is first detected")
+
+showConfidenceColors = input.bool(true, "Color by Confidence", group=groupDisplay,
+     tooltip="Use different colors for L3/L2/L1 signals")
+
+debugMode = input.bool(false, "Debug Mode", group=groupDisplay,
+     tooltip="Shows detailed scoring breakdown")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INTERNAL PARAMETERS (Auto-optimized)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Core detection parameters (optimized defaults)
+velocityPeriodInput = 5
+velocityThresholdInput = 2.0
+atrPeriodInput = 14
+minWickRatioInput = 0.45
+minCandleSizeInput = 0.7
+rocPeriodInput = 8
+rocExtremeInput = 80.0
+rocLookbackInput = 120
+requireRocExtreme = false
+volMultiplierInput = 1.4
+volPeriodInput = 20
+cooldownBarsInput = 8
+minPriceMoveInput = 2.2
+extremeTolAtrInput = 0.6
+sweepLookbackInput = 20
+retestTolAtrInput = 0.25
+maxWaitBarsInput = 20
+requireNoNewExtreme = true
+pivotLeft = 3
+pivotRight = 3
+bosUsePivots = true
+maxBosLevelDistAtrInput = 6.0
+regimeTf = "60"
+regimeEmaLen = 200
+regimeSlopeLookback = 20
+regimeAtrLen = 14
+maxRegimeSlopeAtr = 1.0
+requireBothCore = true
+priceExtremeLookbackInput = 40
 
 // Auto-adjusted values with smart scaling
 int velocityPeriod = autoAdaptive ? int(math.max(2, math.round(velocityPeriodInput * tfMultiplier))) : velocityPeriodInput
 float velocityThreshold = autoAdaptive ? velocityThresholdInput * thresholdMultiplier : velocityThresholdInput
 int atrPeriod = autoAdaptive ? int(math.max(5, math.round(atrPeriodInput * tfMultiplier))) : atrPeriodInput
-
-groupCandle = "Reversal Candle Detection"
-minWickRatioInput = input.float(0.45, "Min Wick Ratio", minval=0.2, maxval=2.0, step=0.05, group=groupCandle,
-     tooltip="Base: 0.45 for larger candles with good wicks")
-minCandleSizeInput = input.float(0.7, "Min Candle Size (x ATR)", minval=0.3, maxval=5.0, step=0.1, group=groupCandle,
-     tooltip="Base: 0.7 - reversal candles are typically larger")
-
-// Auto-adjusted values - lower TFs need stricter candle requirements
 float minWickRatio = autoAdaptive ? minWickRatioInput * thresholdMultiplier : minWickRatioInput
 float minCandleSize = autoAdaptive ? minCandleSizeInput * thresholdMultiplier : minCandleSizeInput
-
-groupMomentum = "Momentum Exhaustion"
-rocPeriodInput = input.int(8, "ROC Period (Base: 15m)", minval=3, maxval=50, group=groupMomentum,
-     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
-rocExtremeInput = input.float(80.0, "ROC Extreme Percentile", minval=70.0, maxval=99.0, step=1.0, group=groupMomentum,
-     tooltip="Lower TFs auto-adjust to be more strict")
-rocLookbackInput = input.int(120, "ROC Lookback (Base: 15m)", minval=50, maxval=1000, group=groupMomentum,
-     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
-
-// Auto-adjusted values
 int rocPeriod = autoAdaptive ? int(math.max(3, math.round(rocPeriodInput * tfMultiplier))) : rocPeriodInput
 int rocLookback = autoAdaptive ? int(math.max(50, math.round(rocLookbackInput * tfMultiplier))) : rocLookbackInput
-// Lower timeframes need stricter ROC extremes (higher percentile)
 float rocExtreme = autoAdaptive ? math.min(95.0, rocExtremeInput + (tfMinutes < 15 ? (15 - tfMinutes) * 0.5 : 0)) : rocExtremeInput
-
-requireRocExtreme = input.bool(false, "Require ROC Extreme", group=groupMomentum,
-     tooltip="OFF = more signals, ROC just adds bonus points")
-
-groupVolume = "Volume Climax"
-volMultiplierInput = input.float(1.4, "Volume Spike (x Average)", minval=1.1, maxval=5.0, step=0.1, group=groupVolume,
-     tooltip="Lower TFs need higher volume spikes to be significant")
-volPeriodInput = input.int(20, "Volume Average Period (Base: 15m)", minval=10, maxval=200, group=groupVolume,
-     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
-
-// Auto-adjusted values - lower TFs need higher volume requirements
 float volMultiplier = autoAdaptive ? volMultiplierInput * thresholdMultiplier : volMultiplierInput
 int volPeriod = autoAdaptive ? int(math.max(10, math.round(volPeriodInput * tfMultiplier))) : volPeriodInput
-
-groupFilters = "Filters"
-cooldownBarsInput = input.int(8, "Signal Cooldown (bars, Base: 15m)", minval=0, maxval=100, group=groupFilters,
-     tooltip="Base: 6-10 bars for 15m. Auto-mode scales to prevent signal clusters")
-minPriceMoveInput = input.float(2.2, "Min Price Move (x ATR)", minval=0.5, maxval=10.0, step=0.2, group=groupFilters,
-     tooltip="Base: 2.2 - needs meaningful move before reversal")
-
-extremeTolAtrInput = input.float(0.6, "Extreme Proximity (x ATR)", minval=0.1, maxval=5.0, step=0.1, group=groupFilters,
-     tooltip="How close price must be to the recent high/low to count as an extreme. ATR-normalized for alts on 5-15m")
-
-confirmationMode = input.string("Sweep Closeback", "Spike Confirmation",
-     options=["Off", "Sweep Closeback"],
-     group=groupFilters,
-     tooltip="Off: no structure confirmation\nSweep Closeback: require sweep of recent high/low and close back inside (reduces fading continuation spikes)")
-sweepLookbackInput = input.int(20, "Sweep Lookback (Base: 15m)", minval=10, maxval=200, group=groupFilters,
-     tooltip="Base: 20 bars on 15m (~5 hours). Auto-mode scales this")
-
-entryModel = input.string("BOS + Retest (Strict)", "Entry Model",
-     options=["Setup (Aggressive)", "BOS (Close Confirm)", "BOS + Retest (Strict)"],
-     group=groupFilters,
-     tooltip="Setup: signals immediately (many false positives)\nBOS: require close through setup candle extreme\nBOS+Retest: require break then retest+rejection (fewest, highest precision)")
-
-retestTolAtrInput = input.float(0.25, "Retest Tolerance (x ATR)", minval=0.05, maxval=2.0, step=0.05, group=groupFilters,
-     tooltip="Used in BOS+Retest to consider the level retested")
-
-maxWaitBarsInput = input.int(20, "Max Wait Bars (Base: 15m)", minval=1, maxval=500, group=groupFilters,
-     tooltip="How long an exhaustion setup stays valid for waiting confirmation")
-
-requireNoNewExtreme = input.bool(true, "Strict: No New Extreme", group=groupFilters,
-     tooltip="In BOS/BOS+Retest, require confirmation candle does not make a new extreme beyond the setup candle")
-
-groupStructure = "Structure (BOS)"
-pivotLeft = input.int(3, "Pivot Left Bars", minval=1, maxval=20, group=groupStructure)
-pivotRight = input.int(3, "Pivot Right Bars", minval=1, maxval=20, group=groupStructure)
-bosUsePivots = input.bool(true, "BOS Uses Swing Pivots", group=groupStructure,
-     tooltip="ON: BOS level uses last confirmed swing (pivot). OFF: BOS uses setup candle extreme")
-maxBosLevelDistAtrInput = input.float(6.0, "Max BOS Level Distance (x ATR)", minval=1.0, maxval=50.0, step=0.5, group=groupStructure,
-     tooltip="If the nearest swing level is too far away, fallback to setup candle extreme to avoid overly delayed entries")
-
-useRegimeFilter = input.bool(true, "Use 1h Regime Filter", group=groupFilters,
-     tooltip="Suppresses countertrend entries during strong 1h trends")
-regimeTf = input.timeframe("60", "Regime Timeframe", group=groupFilters)
-regimeEmaLen = input.int(200, "Regime EMA Length", minval=20, maxval=500, group=groupFilters)
-regimeSlopeLookback = input.int(20, "Regime Slope Lookback", minval=5, maxval=200, group=groupFilters)
-regimeAtrLen = input.int(14, "Regime ATR Length", minval=5, maxval=100, group=groupFilters)
-maxRegimeSlopeAtr = input.float(1.0, "Max 1h EMA Slope (ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupFilters,
-     tooltip="Higher = allow more countertrend fades")
-
-requireBothCore = input.bool(true, "Require BOTH Velocity + Reversal Candle", group=groupFilters,
-     tooltip="Recommended: ON for quality signals")
-
-priceExtremeLookbackInput = input.int(40, "Price Extreme Lookback (Base: 15m)", minval=20, maxval=500, group=groupFilters,
-     tooltip="Base: 40 bars for 15m (~10 hours). Auto-mode scales proportionally")
-
-// Auto-adjusted values
 int cooldownBars = autoAdaptive ? int(math.max(0, math.round(cooldownBarsInput * tfMultiplier))) : cooldownBarsInput
 float minPriceMove = autoAdaptive ? minPriceMoveInput * thresholdMultiplier : minPriceMoveInput
 int priceExtremeLookback = autoAdaptive ? int(math.max(20, math.round(priceExtremeLookbackInput * tfMultiplier))) : priceExtremeLookbackInput
 int sweepLookback = autoAdaptive ? int(math.max(10, math.round(sweepLookbackInput * tfMultiplier))) : sweepLookbackInput
-
 float retestTolAtr = autoAdaptive ? retestTolAtrInput / thresholdMultiplier : retestTolAtrInput
 float extremeTolAtr = autoAdaptive ? extremeTolAtrInput / thresholdMultiplier : extremeTolAtrInput
 float maxBosLevelDistAtr = autoAdaptive ? maxBosLevelDistAtrInput / thresholdMultiplier : maxBosLevelDistAtrInput
 float waitMultiplier = (tfMinutes > 0 ? 15.0 / tfMinutes : 1.0)
 int maxWaitBars = autoAdaptive ? int(math.min(500, math.max(1, math.round(maxWaitBarsInput * waitMultiplier)))) : maxWaitBarsInput
-
-useVolatilityFilter = input.bool(true, "Require Active Market (Volatility Filter)", group=groupFilters,
-     tooltip="Blocks signals during low-volatility ranging markets")
-
-groupVis = "Display"
-signalStyle = input.string("Labels with Confidence", "Signal Style", 
-     options=["Triangles Only", "Labels with Confidence", "Both"], 
-     group=groupVis)
-// labelSize = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal"], group=groupVis)  // Disabled - Pine Script requires constant size
-showSetupMarkers = input.bool(true, "Show Setup Markers", group=groupVis,
-     tooltip="Shows where the spike exhaustion setup is detected. Entry signals can come later depending on Entry Model.")
-showConfidenceColors = input.bool(true, "Use Confidence Colors", group=groupVis,
-     tooltip="L3/S3=Bright, L2/S2=Medium, L1/S1=Dim")
-debugMode = input.bool(false, "Debug Mode", group=groupVis)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ACTIVE PARAMETER VALUES (Auto-Adjusted or Manual)
