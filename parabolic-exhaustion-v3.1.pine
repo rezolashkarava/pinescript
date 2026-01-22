@@ -1,5 +1,5 @@
 //@version=6
-indicator("Parabolic Exhaustion [Pagani] v3.1", overlay=true, max_labels_count=100)
+indicator("Parabolic Exhaustion [Paganie] v3.1", overlay=true, max_labels_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE CONCEPT: Catch parabolic tops/bottoms with CONFIDENCE LEVELS
