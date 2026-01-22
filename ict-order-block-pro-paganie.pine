@@ -1,9 +1,16 @@
 //@version=6
-indicator("ICT Order Block Pro [Paganie] v3.4", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("ICT Order Block Pro [Paganie] v3.4.1", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
-// ICT ORDER BLOCK PRO V3.4.0 - INSTITUTIONAL SMART MONEY CONCEPTS
+// ICT ORDER BLOCK PRO V3.4.1 - INSTITUTIONAL SMART MONEY CONCEPTS
 // Professional-grade order block detection with ICT/SMC methodology
+//
+// V3.4.1 - Array Bounds & Edge Case Fixes:
+// • Fixed trimLevels function index out-of-bounds when removing liquidity levels
+// • Added array size validation in calcPower for intrabar data consistency
+// • Added pivotIdx upper bound check in checkMSB function
+// • Added defensive guards against division by zero in gradient rendering
+// • Enhanced updateBlock with segment bounds protection
 //
 // V3.4.0 - Production Default UX + Stability Finalization:
 // • Settings Mode: Auto (default) optimizes all settings per timeframe
@@ -486,7 +493,11 @@ arrVol = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, volume, ignor
 calcPower(string tieBreakRule) =>
     float buyVol = 0.0
     float sellVol = 0.0
-    int intrabarCount = array.size(arrVol)
+    // Validate all arrays have same size (edge case: symbol/timeframe errors)
+    int sizeVol = array.size(arrVol)
+    int sizeOpen = array.size(arrOpen)
+    int sizeClose = array.size(arrClose)
+    int intrabarCount = math.min(sizeVol, math.min(sizeOpen, sizeClose))
     int lastDir = 0  // 1 = bullish, -1 = bearish, 0 = unknown
     
     if intrabarCount > 0
@@ -837,7 +848,8 @@ checkMSB(int pivotIdx, int dispIdx, int lookback, string dir) =>
     int scanEnd = math.min(dispIdx + lookback, bar_index)
     
     // Need at least one bar to check structure
-    if pivotIdx < 0 or dispIdx < 0 or dispIdx > bar_index or scanStart > bar_index
+    // pivotIdx must be within valid historical range for array access
+    if pivotIdx < 0 or pivotIdx > bar_index or dispIdx < 0 or dispIdx > bar_index or scanStart > bar_index
         confirmed := false
     else
         if dir == "Bull"
@@ -1217,9 +1229,11 @@ createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) 
     if rMode == "Gradient"
         // Create elegant gradient layers with edge-to-center fading
         float blockHeight = block.top - block.bot
-        float segmentHeight = blockHeight / segments  // Pre-compute loop invariant
-        int lastSegment = segments - 1                // Pre-compute loop invariant
-        float invLastSegment = 1.0 / lastSegment          // Pre-compute for progress calculation
+        // Ensure segments is at least 2 to prevent division by zero
+        int safeSegments = math.max(segments, 2)
+        float segmentHeight = blockHeight / safeSegments  // Pre-compute loop invariant
+        int lastSegment = safeSegments - 1                // Pre-compute loop invariant
+        float invLastSegment = 1.0 / lastSegment          // Pre-compute for progress calculation (safe: lastSegment >= 1)
         bool isStrong = block.strength == "Strong" or block.strength == "Elite"
 
         // Base colors
@@ -1493,7 +1507,9 @@ updateBlock(OrderBlock block, int currentTime, int segments) =>
         // Update gradient boxes - extend to current bar (boxes use bar_index)
         int volBoxCount = array.size(block.volumeBoxes)
         if volBoxCount > 0
-            int maxIdx = math.min(segments - 1, volBoxCount - 1)
+            // Ensure segments is at least 1 to prevent negative index
+            int safeSegments = math.max(segments, 1)
+            int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
             for i = 0 to maxIdx
                 box.set_right(array.get(block.volumeBoxes, i), bar_index)
 
@@ -1786,17 +1802,15 @@ updateLiquidityLevels(array<LiquiditySweep> levels) =>
 
 // Trim old liquidity levels
 trimLevels(array<LiquiditySweep> levels, int maxCount) =>
-    int levelCount = array.size(levels)
-    if levelCount > maxCount
+    if array.size(levels) > maxCount
         // Remove oldest swept/run levels first
-        for i = levelCount - 1 to 0
-            if levelCount <= maxCount
+        for i = array.size(levels) - 1 to 0
+            if array.size(levels) <= maxCount
                 break
             LiquiditySweep sweep = array.get(levels, i)
             if sweep.swept or sweep.ranThrough
                 deleteLiquiditySweep(sweep)
                 array.remove(levels, i)
-                levelCount -= 1
         
         // If still too many, remove oldest
         while array.size(levels) > maxCount
