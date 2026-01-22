@@ -57,6 +57,10 @@ bool showDivergences = input.bool(false, "Divergence Alerts", group=G2,
      tooltip="Detects price/oscillator divergences (advanced feature)\n" +
              "Generates separate alerts but no visual markers")
 
+bool useVolatilityFilter = input.bool(true, "Low-Volatility Filter", group=G2,
+     tooltip="Filters signals when ATR% is too low (chop / compression)\n" +
+             "Recommended: ON for cleaner signals")
+
 // ─────── Alert Preferences ───────
 string G2A = "🔔 Alert Preferences"
 
@@ -89,6 +93,20 @@ int minimumScoreOverride = input.int(0, "Min Score Override", minval=0, maxval=9
      tooltip="Manual override for minimum score requirement\n" +
              "0 = Auto (recommended) | 4-6 = Custom threshold\n" +
              "Higher = fewer signals but higher quality")
+
+float lowVolCutoffOverride = input.float(0.0, "ATR% Cutoff Override", minval=0.0, step=0.05, group=G4,
+     tooltip="Manual override for low-volatility filter (ATR% of price)\n" +
+             "0 = Auto (recommended) | Example: 0.35")
+
+int confirmationsOverride = input.int(0, "Confirmations Override", minval=0, maxval=4, group=G4,
+     tooltip="Manual override for confirmation layers required (0-4)\n" +
+             "0 = Auto (recommended)")
+
+bool extraConfirmationInChop = input.bool(true, "Extra Confirmation In Chop", group=G4,
+     tooltip="When market is not trending and not high-volatility, require one extra confirmation")
+
+bool requireReversalCandleConservative = input.bool(true, "Require Reversal Candle (Conservative)", group=G4,
+     tooltip="In Conservative mode, require a reversal candle for a signal")
 
 // ══════════════════════════════════════════════════════════════════════════════════
 // ADAPTIVE PARAMETERS
@@ -169,8 +187,7 @@ volMa = ta.sma(volume, volPeriod)
 float volPercentile = ta.percentrank(volume, 100)
 bool volumeClimax = volume >= volMa * 1.3
 bool exceptionalVolume = volPercentile >= 95
-// Cap weight at 1.0 to prevent score inflation
-float volumeWeight = math.min(exceptionalVolume ? 1.5 : volumeClimax ? 1.0 : 0.5, 1.0)
+float volumeWeight = exceptionalVolume ? 1.5 : 1.0
 
 // Momentum
 float prevVelocity1 = atr[1] > 0 ? math.abs(close[1] - close[1 + velocityPeriod]) / atr[1] : 0
@@ -197,7 +214,7 @@ if parabolicDown and bullishReversalCandle
 if rocExtremeBullish
     longScore += 1.0
 if volumeClimax or exceptionalVolume
-    longScore += 1.0 * volumeWeight
+    longScore += volumeWeight
 if velocityDecreasing
     longScore += 1.0
 if nearLowExtreme
@@ -213,7 +230,7 @@ if parabolicUp and bearishReversalCandle
 if rocExtremeBearish
     shortScore += 1.0
 if volumeClimax or exceptionalVolume
-    shortScore += 1.0 * volumeWeight
+    shortScore += volumeWeight
 if velocityDecreasing
     shortScore += 1.0
 if nearHighExtreme
@@ -268,33 +285,32 @@ float oscPivotHigh = ta.pivothigh(oscillator, divLookback, divLookback)
 float pricePivotLow = ta.pivotlow(low, divLookback, divLookback)
 float pricePivotHigh = ta.pivothigh(high, divLookback, divLookback)
 
-var float lastOscLow = na
-var float lastPriceLow = na
-var float lastOscHigh = na
-var float lastPriceHigh = na
+var float prevOscLow = na
+var float prevPriceLow = na
+var float prevOscHigh = na
+var float prevPriceHigh = na
 
-if not na(oscPivotLow)
-    lastOscLow := oscPivotLow
-    lastPriceLow := pricePivotLow
+bool bullishDivergence = false
+bool bearishDivergence = false
 
-if not na(oscPivotHigh)
-    lastOscHigh := oscPivotHigh
-    lastPriceHigh := pricePivotHigh
+if not na(oscPivotLow) and not na(pricePivotLow)
+    bullishDivergence := not na(prevOscLow) and not na(prevPriceLow) and pricePivotLow < prevPriceLow and oscPivotLow > prevOscLow
+    prevOscLow := oscPivotLow
+    prevPriceLow := pricePivotLow
 
-bool bullishDivergence = not na(lastOscLow) and not na(oscPivotLow) and 
-     pricePivotLow < lastPriceLow and oscPivotLow > lastOscLow
-
-bool bearishDivergence = not na(lastOscHigh) and not na(oscPivotHigh) and 
-     pricePivotHigh > lastPriceHigh and oscPivotHigh < lastOscHigh
+if not na(oscPivotHigh) and not na(pricePivotHigh)
+    bearishDivergence := not na(prevOscHigh) and not na(prevPriceHigh) and pricePivotHigh > prevPriceHigh and oscPivotHigh < prevOscHigh
+    prevOscHigh := oscPivotHigh
+    prevPriceHigh := pricePivotHigh
 
 // ══════════════════════════════════════════════════════════════════════════════════
 // MULTI-TIMEFRAME VALIDATION
 // ══════════════════════════════════════════════════════════════════════════════════
 
-string htf = timeframe.period == "1" ? "5" : 
-             timeframe.period == "5" ? "15" :
-             timeframe.period == "15" ? "60" :
-             timeframe.period == "60" ? "240" : "D"
+string htf = tfMinutes <= 1 ? "5" :
+             tfMinutes <= 5 ? "15" :
+             tfMinutes <= 15 ? "60" :
+             tfMinutes <= 60 ? "240" : "D"
 
 [htfOsc, htfTrend] = request.security(syminfo.tickerid, htf, 
     [oscillator, ema50 > ema200], lookahead=barmerge.lookahead_off)
@@ -342,16 +358,32 @@ int shortConfidence = shortScore >= 7 ? 3 : shortScore >= 5 ? 2 : shortScore >= 
 bool trendOkLong = useTrendFilter ? (not bearishRegime or bullishDivergence) : true
 bool trendOkShort = useTrendFilter ? (not bullishRegime or bearishDivergence) : true
 
+// Quality filters to reduce false positives in low-vol / chop
+float lowVolCutoffAuto = autoTimeframeAdapt ? (tfMinutes <= 5 ? 0.25 : tfMinutes <= 60 ? 0.35 : 0.5) : 0.35
+float lowVolCutoff = lowVolCutoffOverride > 0 ? lowVolCutoffOverride : lowVolCutoffAuto
+bool volatilityOk = atrPercent >= lowVolCutoff
+bool volatilityFilterOk = not useVolatilityFilter ? true : (signalMode == "Aggressive" ? true : volatilityOk)
+
+int minConfirmationsBaseAuto = signalMode == "Conservative" ? 3 : 2
+int minConfirmationsBase = confirmationsOverride > 0 ? confirmationsOverride : minConfirmationsBaseAuto
+
+int minConfirmationsRequired = minConfirmationsBase
+if extraConfirmationInChop and not isTrending and not isHighVolatility
+    minConfirmationsRequired += 1
+minConfirmationsRequired := math.min(minConfirmationsRequired, 4)
+
+bool requireReversalCandle = signalMode == "Conservative" and requireReversalCandleConservative
+
 // Confirmation requirement: 2 of 4 layers (balanced)
 // Core setup: Score + 2 confirmations + parabolic move + filters
-bool longSetup = longScore >= minScoreRequired and longConfirmations >= 2 and 
-     parabolicDown and trendOkLong and htfSupportsLong
+bool longSetup = longScore >= minScoreRequired and longConfirmations >= minConfirmationsRequired and 
+     parabolicDown and trendOkLong and htfSupportsLong and volatilityFilterOk and (not requireReversalCandle or bullishReversalCandle)
 
-bool shortSetup = shortScore >= minScoreRequired and shortConfirmations >= 2 and 
-     parabolicUp and trendOkShort and htfSupportsShort
+bool shortSetup = shortScore >= minScoreRequired and shortConfirmations >= minConfirmationsRequired and 
+     parabolicUp and trendOkShort and htfSupportsShort and volatilityFilterOk and (not requireReversalCandle or bearishReversalCandle)
 
 var int lastSignalBar = na
-bool cooldownOk = signalCooldown == 0 or na(lastSignalBar) or (bar_index - lastSignalBar) > signalCooldown
+bool cooldownOk = signalCooldown == 0 or na(lastSignalBar) or (bar_index - lastSignalBar) >= signalCooldown
 
 bool longSignal = longSetup and cooldownOk and longScore >= shortScore and barstate.isconfirmed
 bool shortSignal = shortSetup and cooldownOk and shortScore > longScore and barstate.isconfirmed
