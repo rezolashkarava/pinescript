@@ -96,7 +96,8 @@ bool parabolicUp = priceChange > 0 and priceVelocity >= velThreshold
 bool parabolicDown = priceChange < 0 and priceVelocity >= velThreshold
 
 // Check if we've moved far enough to have a reversal
-float priceRange = math.abs(close - close[math.round(velocityPeriod * 2)])
+int velocityPeriod2 = velocityPeriod * 2
+float priceRange = math.abs(close - close[velocityPeriod2])
 bool sufficientMove = atr > 0 and priceRange >= minPriceMove * atr
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -146,7 +147,6 @@ volMa = ta.sma(volume, volPeriod)
 bool volumeClimax = volume >= volMa * volMult
 
 // Volume declining after spike (exhaustion pattern) - improved logic
-bool volExhaustion = (volume[1] >= volMa[1] * volMult) and volume < volume[1]
 bool volExhaustionStrong = (volume[1] >= volMa[1] * volMult or volume[2] >= volMa[2] * volMult) and volume < ta.sma(volume, 3)[1]
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -154,17 +154,18 @@ bool volExhaustionStrong = (volume[1] >= volMa[1] * volMult or volume[2] >= volM
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Check if velocity is decreasing (deceleration)
-float prevVelocity = math.abs((close[1] - close[1 + velocityPeriod])) / atr[1]
+float prevVelocity = atr[1] > 0 ? math.abs(close[1] - close[1 + velocityPeriod]) / atr[1] : 0
 bool velocityDecreasing = priceVelocity < prevVelocity
 
 // Check if we're at a significant price extreme
 float priceHigh = ta.highest(high, priceExtremeLookback)
 float priceLow = ta.lowest(low, priceExtremeLookback)
-bool nearHighExtreme = high >= priceHigh or high >= priceHigh * 0.997  // Within 0.3% of high
-bool nearLowExtreme = low <= priceLow or low <= priceLow * 1.003        // Within 0.3% of low
+bool nearHighExtreme = high >= priceHigh * 0.997  // Within 0.3% of high
+bool nearLowExtreme = low <= priceLow * 1.003     // Within 0.3% of low
 
 // Volatility filter - check if we're in an active market
-float atrRatio = atr / ta.sma(atr, 50)  // Current ATR vs long-term average
+float atrSma = ta.sma(atr, 50)
+float atrRatio = atrSma > 0 ? atr / atrSma : 0  // Current ATR vs long-term average
 bool volatilityOk = not useVolatilityFilter or atrRatio >= 0.7  // Require 70%+ of average volatility
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -251,14 +252,18 @@ if longSignal or shortSignal
 bool showTriangles = signalStyle == "Triangles Only" or signalStyle == "Both"
 bool showLabels = signalStyle == "Labels with Confidence" or signalStyle == "Both"
 
-// Confidence-based colors (darker, more readable)
-color longColorL3 = showConfidenceColors ? #00A855 : #00A855  // Dark green (high confidence)
-color longColorL2 = showConfidenceColors ? #008544 : #008544  // Darker green (medium)
-color longColorL1 = showConfidenceColors ? #006633 : #006633  // Darkest green (low)
+size signalSize = labelSize == "Tiny" ? size.tiny : labelSize == "Normal" ? size.normal : size.small
 
-color shortColorS3 = showConfidenceColors ? #CC0000 : #CC0000  // Dark red (high confidence)
-color shortColorS2 = showConfidenceColors ? #AA0000 : #AA0000  // Darker red (medium)
-color shortColorS1 = showConfidenceColors ? #880000 : #880000  // Darkest red (low)
+// Confidence-based colors
+color longColorBase = #00A855
+color longColorL3 = longColorBase
+color longColorL2 = showConfidenceColors ? #008544 : longColorBase
+color longColorL1 = showConfidenceColors ? #006633 : longColorBase
+
+color shortColorBase = #CC0000
+color shortColorS3 = shortColorBase
+color shortColorS2 = showConfidenceColors ? #AA0000 : shortColorBase
+color shortColorS1 = showConfidenceColors ? #880000 : shortColorBase
 
 // Text colors (readable on dark backgrounds)
 color longTextColor = color.new(#FFFFFF, 0)   // White on dark green
@@ -273,138 +278,31 @@ bool shortS3 = shortSignal and shortConfidence == 3
 bool shortS2 = shortSignal and shortConfidence == 2
 bool shortS1 = shortSignal and shortConfidence == 1
 
-// Triangles with confidence colors - Small size
-plotshape(showTriangles and longL3 and labelSize == "Small", title="L3 ▲", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL3, 0), size=size.small)
-plotshape(showTriangles and longL2 and labelSize == "Small", title="L2 ▲", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL2, 0), size=size.small)
-plotshape(showTriangles and longL1 and labelSize == "Small", title="L1 ▲", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL1, 0), size=size.small)
+// Triangles with confidence colors
+plotshape(showTriangles and longL3, title="L3 ▲", style=shape.triangleup, location=location.belowbar,
+     color=color.new(longColorL3, 0), size=signalSize)
+plotshape(showTriangles and longL2, title="L2 ▲", style=shape.triangleup, location=location.belowbar,
+     color=color.new(longColorL2, 0), size=signalSize)
+plotshape(showTriangles and longL1, title="L1 ▲", style=shape.triangleup, location=location.belowbar,
+     color=color.new(longColorL1, 0), size=signalSize)
 
-plotshape(showTriangles and shortS3 and labelSize == "Small", title="S3 ▼", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS3, 0), size=size.small)
-plotshape(showTriangles and shortS2 and labelSize == "Small", title="S2 ▼", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS2, 0), size=size.small)
-plotshape(showTriangles and shortS1 and labelSize == "Small", title="S1 ▼", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS1, 0), size=size.small)
-
-// Triangles - Tiny size
-plotshape(showTriangles and longL3 and labelSize == "Tiny", title="L3 ▲ tiny", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL3, 0), size=size.tiny)
-plotshape(showTriangles and longL2 and labelSize == "Tiny", title="L2 ▲ tiny", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL2, 0), size=size.tiny)
-plotshape(showTriangles and longL1 and labelSize == "Tiny", title="L1 ▲ tiny", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL1, 0), size=size.tiny)
-
-plotshape(showTriangles and shortS3 and labelSize == "Tiny", title="S3 ▼ tiny", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS3, 0), size=size.tiny)
-plotshape(showTriangles and shortS2 and labelSize == "Tiny", title="S2 ▼ tiny", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS2, 0), size=size.tiny)
-plotshape(showTriangles and shortS1 and labelSize == "Tiny", title="S1 ▼ tiny", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS1, 0), size=size.tiny)
-
-// Triangles - Normal size
-plotshape(showTriangles and longL3 and labelSize == "Normal", title="L3 ▲ normal", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL3, 0), size=size.normal)
-plotshape(showTriangles and longL2 and labelSize == "Normal", title="L2 ▲ normal", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL2, 0), size=size.normal)
-plotshape(showTriangles and longL1 and labelSize == "Normal", title="L1 ▲ normal", 
-     style=shape.triangleup, location=location.belowbar, 
-     color=color.new(longColorL1, 0), size=size.normal)
-
-plotshape(showTriangles and shortS3 and labelSize == "Normal", title="S3 ▼ normal", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS3, 0), size=size.normal)
-plotshape(showTriangles and shortS2 and labelSize == "Normal", title="S2 ▼ normal", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS2, 0), size=size.normal)
-plotshape(showTriangles and shortS1 and labelSize == "Normal", title="S1 ▼ normal", 
-     style=shape.triangledown, location=location.abovebar, 
-     color=color.new(shortColorS1, 0), size=size.normal)
+plotshape(showTriangles and shortS3, title="S3 ▼", style=shape.triangledown, location=location.abovebar,
+     color=color.new(shortColorS3, 0), size=signalSize)
+plotshape(showTriangles and shortS2, title="S2 ▼", style=shape.triangledown, location=location.abovebar,
+     color=color.new(shortColorS2, 0), size=signalSize)
+plotshape(showTriangles and shortS1, title="S1 ▼", style=shape.triangledown, location=location.abovebar,
+     color=color.new(shortColorS1, 0), size=signalSize)
 
 // Confidence-based text labels
 if showLabels
-    // LONG labels with confidence levels
-    if longL3
-        if labelSize == "Tiny"
-            label.new(bar_index, low, text="L3", style=label.style_label_up, 
-                 color=longColorL3, textcolor=longTextColor, size=size.tiny)
-        else if labelSize == "Normal"
-            label.new(bar_index, low, text="L3", style=label.style_label_up, 
-                 color=longColorL3, textcolor=longTextColor, size=size.normal)
-        else
-            label.new(bar_index, low, text="L3", style=label.style_label_up, 
-                 color=longColorL3, textcolor=longTextColor, size=size.small)
-    
-    if longL2
-        if labelSize == "Tiny"
-            label.new(bar_index, low, text="L2", style=label.style_label_up, 
-                 color=longColorL2, textcolor=longTextColor, size=size.tiny)
-        else if labelSize == "Normal"
-            label.new(bar_index, low, text="L2", style=label.style_label_up, 
-                 color=longColorL2, textcolor=longTextColor, size=size.normal)
-        else
-            label.new(bar_index, low, text="L2", style=label.style_label_up, 
-                 color=longColorL2, textcolor=longTextColor, size=size.small)
-    
-    if longL1
-        if labelSize == "Tiny"
-            label.new(bar_index, low, text="L1", style=label.style_label_up, 
-                 color=longColorL1, textcolor=longTextColor, size=size.tiny)
-        else if labelSize == "Normal"
-            label.new(bar_index, low, text="L1", style=label.style_label_up, 
-                 color=longColorL1, textcolor=longTextColor, size=size.normal)
-        else
-            label.new(bar_index, low, text="L1", style=label.style_label_up, 
-                 color=longColorL1, textcolor=longTextColor, size=size.small)
-    
-    // SHORT labels with confidence levels
-    if shortS3
-        if labelSize == "Tiny"
-            label.new(bar_index, high, text="S3", style=label.style_label_down, 
-                 color=shortColorS3, textcolor=shortTextColor, size=size.tiny)
-        else if labelSize == "Normal"
-            label.new(bar_index, high, text="S3", style=label.style_label_down, 
-                 color=shortColorS3, textcolor=shortTextColor, size=size.normal)
-        else
-            label.new(bar_index, high, text="S3", style=label.style_label_down, 
-                 color=shortColorS3, textcolor=shortTextColor, size=size.small)
-    
-    if shortS2
-        if labelSize == "Tiny"
-            label.new(bar_index, high, text="S2", style=label.style_label_down, 
-                 color=shortColorS2, textcolor=shortTextColor, size=size.tiny)
-        else if labelSize == "Normal"
-            label.new(bar_index, high, text="S2", style=label.style_label_down, 
-                 color=shortColorS2, textcolor=shortTextColor, size=size.normal)
-        else
-            label.new(bar_index, high, text="S2", style=label.style_label_down, 
-                 color=shortColorS2, textcolor=shortTextColor, size=size.small)
-    
-    if shortS1
-        if labelSize == "Tiny"
-            label.new(bar_index, high, text="S1", style=label.style_label_down, 
-                 color=shortColorS1, textcolor=shortTextColor, size=size.tiny)
-        else if labelSize == "Normal"
-            label.new(bar_index, high, text="S1", style=label.style_label_down, 
-                 color=shortColorS1, textcolor=shortTextColor, size=size.normal)
-        else
-            label.new(bar_index, high, text="S1", style=label.style_label_down, 
-                 color=shortColorS1, textcolor=shortTextColor, size=size.small)
+    if longSignal
+        color longLabelColor = longConfidence == 3 ? longColorL3 : longConfidence == 2 ? longColorL2 : longColorL1
+        label.new(bar_index, low, text="L" + str.tostring(longConfidence), style=label.style_label_up,
+             color=longLabelColor, textcolor=longTextColor, size=signalSize)
+    if shortSignal
+        color shortLabelColor = shortConfidence == 3 ? shortColorS3 : shortConfidence == 2 ? shortColorS2 : shortColorS1
+        label.new(bar_index, high, text="S" + str.tostring(shortConfidence), style=label.style_label_down,
+             color=shortLabelColor, textcolor=shortTextColor, size=signalSize)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEBUG TABLE
