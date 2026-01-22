@@ -398,22 +398,22 @@ if longSignal or shortSignal
 // ══════════════════════════════════════════════════════════════════════════════════
 
 // Reference Lines
-plot(100, 'Upper Bound', color.new(bearishColor, 85), 1)
-plot(showThresholdZones ? upperZone : na, 'Overbought Zone', color.new(bearishColor, 80), 1, plot.style_circles)
-plot(50, 'Centerline', color.new(color.gray, 85), 1)
-plot(showThresholdZones ? lowerZone : na, 'Oversold Zone', color.new(bullishColor, 80), 1, plot.style_circles)
-plot(0, 'Lower Bound', color.new(bullishColor, 85), 1)
+plot(100, 'Upper Bound', color.new(bearishColor, 70), 1)
+plot(showThresholdZones ? upperZone : na, 'Overbought Zone', color.new(bearishColor, 60), 1, plot.style_circles)
+plot(50, 'Centerline', color.new(color.gray, 70), 1)
+plot(showThresholdZones ? lowerZone : na, 'Oversold Zone', color.new(bullishColor, 60), 1, plot.style_circles)
+plot(0, 'Lower Bound', color.new(bullishColor, 70), 1)
 
 // Main Line - clean color coding with intensity
 color lineColor = 
      oscillator >= upperZone ? bearishColor :
      oscillator <= lowerZone ? bullishColor :
-     oscillator > 50 ? color.new(bearishColor, 50) :
-     oscillator < 50 ? color.new(bullishColor, 50) :
-     color.new(color.gray, 30)
+     oscillator > 50 ? color.new(bearishColor, 20) :
+     oscillator < 50 ? color.new(bullishColor, 20) :
+     color.new(color.gray, 10)
 
 // Main oscillator line
-plot(oscillator, "PE v2.3", lineColor, 2)
+plot(oscillator, "PE v2.3", lineColor, 3)
 
 // ══════════════════════════════════════════════════════════════════════════════════
 // 🔔 ACTIONABLE ALERTS SYSTEM
