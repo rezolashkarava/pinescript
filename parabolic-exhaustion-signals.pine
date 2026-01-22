@@ -46,6 +46,8 @@ groupVis = "Display"
 showLabels = input.bool(true, "Show Signal Labels", group=groupVis)
 showConditionCount = input.bool(false, "Show Condition Count", group=groupVis,
      tooltip="Display how many conditions were met (for debugging)")
+debugMode = input.bool(false, "Debug Mode (show all conditions)", group=groupVis,
+     tooltip="Shows exactly which conditions are true/false for troubleshooting")
 
 groupFilters = "Filters"
 cooldownBars = input.int(5, "Signal Cooldown (bars)", minval=0, maxval=100, group=groupFilters,
@@ -281,6 +283,116 @@ if showLabels and shortSignal
          color=color.new(#ff3366, 0), 
          textcolor=color.white,
          size=size.normal)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEBUG TABLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if debugMode
+    var table debugTable = table.new(position.top_right, 3, 20, border_width=1)
+    
+    if barstate.islast
+        table.cell(debugTable, 0, 0, "Condition", text_color=color.white, bgcolor=color.gray)
+        table.cell(debugTable, 1, 0, "Bullish", text_color=color.white, bgcolor=color.gray)
+        table.cell(debugTable, 2, 0, "Bearish", text_color=color.white, bgcolor=color.gray)
+        
+        table.cell(debugTable, 0, 1, "ROC Extreme", text_color=color.white)
+        table.cell(debugTable, 1, 1, rocBullishExtreme ? "✓" : "✗", 
+             text_color=rocBullishExtreme ? color.lime : color.red)
+        table.cell(debugTable, 2, 1, rocBearishExtreme ? "✓" : "✗", 
+             text_color=rocBearishExtreme ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 2, "Divergence", text_color=color.white)
+        table.cell(debugTable, 1, 2, bullishDivergence ? "✓" : "✗", 
+             text_color=bullishDivergence ? color.lime : color.red)
+        table.cell(debugTable, 2, 2, bearishDivergence ? "✓" : "✗", 
+             text_color=bearishDivergence ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 3, "AC Decel", text_color=color.white)
+        table.cell(debugTable, 1, 3, acBullishDecel ? "✓" : "✗", 
+             text_color=acBullishDecel ? color.lime : color.red)
+        table.cell(debugTable, 2, 3, acBearishDecel ? "✓" : "✗", 
+             text_color=acBearishDecel ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 4, "Vol Exhaustion", text_color=color.white)
+        table.cell(debugTable, 1, 4, (volExhaustion and close < open) ? "✓" : "✗", 
+             text_color=(volExhaustion and close < open) ? color.lime : color.red)
+        table.cell(debugTable, 2, 4, (volExhaustion and close > open) ? "✓" : "✗", 
+             text_color=(volExhaustion and close > open) ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 5, "─────────────", text_color=color.gray)
+        table.cell(debugTable, 1, 5, "─────", text_color=color.gray)
+        table.cell(debugTable, 2, 5, "─────", text_color=color.gray)
+        
+        table.cell(debugTable, 0, 6, "Score / Required", text_color=color.white)
+        table.cell(debugTable, 1, 6, str.tostring(bullishScore) + " / " + str.tostring(minConditions), 
+             text_color=bullishScore >= minConditions ? color.lime : color.orange)
+        table.cell(debugTable, 2, 6, str.tostring(bearishScore) + " / " + str.tostring(minConditions), 
+             text_color=bearishScore >= minConditions ? color.lime : color.orange)
+        
+        table.cell(debugTable, 0, 7, "Raw Signal", text_color=color.white)
+        table.cell(debugTable, 1, 7, longSignalRaw ? "✓" : "✗", 
+             text_color=longSignalRaw ? color.lime : color.red)
+        table.cell(debugTable, 2, 7, shortSignalRaw ? "✓" : "✗", 
+             text_color=shortSignalRaw ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 8, "─────────────", text_color=color.gray)
+        table.cell(debugTable, 1, 8, "─────", text_color=color.gray)
+        table.cell(debugTable, 2, 8, "─────", text_color=color.gray)
+        
+        table.cell(debugTable, 0, 9, "FILTERS:", text_color=color.yellow, bgcolor=color.maroon)
+        table.cell(debugTable, 1, 9, "", bgcolor=color.maroon)
+        table.cell(debugTable, 2, 9, "", bgcolor=color.maroon)
+        
+        table.cell(debugTable, 0, 10, "Regime Filter", text_color=color.white)
+        table.cell(debugTable, 1, 10, regimeOk ? "✓" : "✗ BLOCKING", 
+             text_color=regimeOk ? color.lime : color.red)
+        table.cell(debugTable, 2, 10, regimeOk ? "✓" : "✗ BLOCKING", 
+             text_color=regimeOk ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 11, "Trend Bias", text_color=color.white)
+        table.cell(debugTable, 1, 11, trendBiasOkLong ? "✓" : "✗ BLOCKING", 
+             text_color=trendBiasOkLong ? color.lime : color.red)
+        table.cell(debugTable, 2, 11, trendBiasOkShort ? "✓" : "✗ BLOCKING", 
+             text_color=trendBiasOkShort ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 12, "SAR Filter", text_color=color.white)
+        table.cell(debugTable, 1, 12, sarLongOk ? "✓" : "✗ BLOCKING", 
+             text_color=sarLongOk ? color.lime : color.red)
+        table.cell(debugTable, 2, 12, sarShortOk ? "✓" : "✗ BLOCKING", 
+             text_color=sarShortOk ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 13, "Cooldown", text_color=color.white)
+        table.cell(debugTable, 1, 13, canSignal ? "✓" : "✗ BLOCKING", 
+             text_color=canSignal ? color.lime : color.red)
+        table.cell(debugTable, 2, 13, canSignal ? "✓" : "✗ BLOCKING", 
+             text_color=canSignal ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 14, "─────────────", text_color=color.gray)
+        table.cell(debugTable, 1, 14, "─────", text_color=color.gray)
+        table.cell(debugTable, 2, 14, "─────", text_color=color.gray)
+        
+        table.cell(debugTable, 0, 15, "FINAL SIGNAL", text_color=color.white, bgcolor=color.navy)
+        table.cell(debugTable, 1, 15, longSignal ? "🚀 LONG" : "—", 
+             text_color=color.white, bgcolor=longSignal ? color.green : color.navy)
+        table.cell(debugTable, 2, 15, shortSignal ? "🔻 SHORT" : "—", 
+             text_color=color.white, bgcolor=shortSignal ? color.red : color.navy)
+        
+        table.cell(debugTable, 0, 16, "─────────────", text_color=color.gray)
+        table.cell(debugTable, 1, 16, "─────", text_color=color.gray)
+        table.cell(debugTable, 2, 16, "─────", text_color=color.gray)
+        
+        table.cell(debugTable, 0, 17, "Mode", text_color=color.white)
+        table.cell(debugTable, 1, 17, isSwing ? "Swing" : "Intraday", text_color=color.orange)
+        table.cell(debugTable, 2, 17, "", text_color=color.white)
+        
+        table.cell(debugTable, 0, 18, "ROC Percentile", text_color=color.white)
+        table.cell(debugTable, 1, 18, str.tostring(rocPercentile, "#.##") + "%", text_color=color.orange)
+        table.cell(debugTable, 2, 18, "", text_color=color.white)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALERTS

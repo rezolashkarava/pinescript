@@ -1,0 +1,537 @@
+//@version=6
+indicator("Parabolic Exhaustion V2 [15m Confidence]", overlay=true, max_labels_count=100)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CORE CONCEPT: Catch parabolic tops/bottoms with CONFIDENCE LEVELS
+// 1. Extreme price velocity (parabolic acceleration)
+// 2. Reversal candle patterns (wicks, body ratio)
+// 3. Volume climax
+// 4. Immediate momentum deceleration
+//
+// CONFIDENCE SYSTEM:
+// L3/S3 = Highest confidence (5-7+ points) - Best risk/reward
+// L2/S2 = Medium confidence (4 points) - Good setups
+// L1/S1 = Lower confidence (3 points) - Aggressive only
+//
+// OPTIMIZED FOR: 15-minute timeframe crypto trading
+// ═══════════════════════════════════════════════════════════════════════════════
+
+groupSettings = "Signal Settings"
+minConfidenceLevel = input.string("L2/S2 (Medium)", "Minimum Confidence Level", 
+     options=["L3/S3 (High only)", "L2/S2 (Medium)", "L1/S1 (All signals)"], 
+     group=groupSettings,
+     tooltip="L3/S3 = 5+ points (best quality)\nL2/S2 = 4 points (balanced)\nL1/S1 = 3 points (aggressive)")
+
+groupVelocity = "Velocity Detection"
+velocityPeriod = input.int(5, "Velocity Period", minval=2, maxval=15, group=groupVelocity,
+     tooltip="15m optimized: 5-6 bars for parabolic detection")
+velocityThreshold = input.float(2.0, "Velocity Threshold (x ATR)", minval=1.0, maxval=10.0, step=0.1, group=groupVelocity,
+     tooltip="15m optimized: 1.8-2.2 sweet spot")
+atrPeriod = input.int(14, "ATR Period", minval=5, maxval=50, group=groupVelocity)
+
+groupCandle = "Reversal Candle Detection"
+minWickRatio = input.float(0.45, "Min Wick Ratio", minval=0.2, maxval=2.0, step=0.05, group=groupCandle,
+     tooltip="15m: larger candles need good wicks")
+minCandleSize = input.float(0.7, "Min Candle Size (x ATR)", minval=0.3, maxval=5.0, step=0.1, group=groupCandle,
+     tooltip="15m: reversal candles are typically larger")
+
+groupMomentum = "Momentum Exhaustion"
+rocPeriod = input.int(8, "ROC Period", minval=3, maxval=20, group=groupMomentum)
+rocExtreme = input.float(80.0, "ROC Extreme Percentile", minval=70.0, maxval=99.0, step=1.0, group=groupMomentum)
+rocLookback = input.int(120, "ROC Lookback", minval=50, maxval=500, group=groupMomentum)
+
+requireRocExtreme = input.bool(false, "Require ROC Extreme", group=groupMomentum,
+     tooltip="OFF = more signals, ROC just adds bonus points")
+
+groupVolume = "Volume Climax"
+volMultiplier = input.float(1.4, "Volume Spike (x Average)", minval=1.1, maxval=5.0, step=0.1, group=groupVolume)
+volPeriod = input.int(20, "Volume Average Period", minval=10, maxval=100, group=groupVolume)
+
+groupFilters = "Filters"
+cooldownBars = input.int(8, "Signal Cooldown (bars)", minval=0, maxval=50, group=groupFilters,
+     tooltip="15m: 6-10 bars prevents clusters")
+minPriceMove = input.float(2.2, "Min Price Move (x ATR)", minval=0.5, maxval=10.0, step=0.2, group=groupFilters,
+     tooltip="15m: needs meaningful move before reversal")
+
+requireBothCore = input.bool(true, "Require BOTH Velocity + Reversal Candle", group=groupFilters,
+     tooltip="Recommended: ON for quality signals")
+
+priceExtremeLookback = input.int(40, "Price Extreme Lookback", minval=20, maxval=200, group=groupFilters,
+     tooltip="15m: 40 bars = ~10 hours lookback")
+
+useVolatilityFilter = input.bool(true, "Require Active Market (Volatility Filter)", group=groupFilters,
+     tooltip="Blocks signals during low-volatility ranging markets")
+
+groupVis = "Display"
+signalStyle = input.string("Labels with Confidence", "Signal Style", 
+     options=["Triangles Only", "Labels with Confidence", "Both"], 
+     group=groupVis)
+labelSize = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal"], group=groupVis)
+showConfidenceColors = input.bool(true, "Use Confidence Colors", group=groupVis,
+     tooltip="L3/S3=Bright, L2/S2=Medium, L1/S1=Dim")
+debugMode = input.bool(false, "Debug Mode", group=groupVis)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 15M TIMEFRAME OPTIMIZATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float velThreshold = velocityThreshold
+float wickRatio = minWickRatio
+float candleSize = minCandleSize
+float volMult = volMultiplier
+float rocExtremeAdj = rocExtreme
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. PRICE VELOCITY (Parabolic Acceleration Detection)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+atr = ta.atr(atrPeriod)
+
+// Calculate price velocity over short period
+priceChange = close - close[velocityPeriod]
+priceVelocity = atr > 0 ? math.abs(priceChange) / atr : 0
+
+// Detect parabolic upward/downward acceleration
+bool parabolicUp = priceChange > 0 and priceVelocity >= velThreshold
+bool parabolicDown = priceChange < 0 and priceVelocity >= velThreshold
+
+// Check if we've moved far enough to have a reversal
+float priceRange = math.abs(close - close[math.round(velocityPeriod * 2)])
+bool sufficientMove = atr > 0 and priceRange >= minPriceMove * atr
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. REVERSAL CANDLE PATTERNS (Real-time)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float bodySize = math.abs(close - open)
+float upperWick = high - math.max(close, open)
+float lowerWick = math.min(close, open) - low
+float candleRange = high - low
+
+bool isBullishCandle = close > open
+bool isBearishCandle = close < open
+
+// Bearish reversal patterns (at tops)
+bool shootingStar = isBearishCandle and upperWick >= bodySize * wickRatio and candleRange >= candleSize * atr
+bool bearishEngulfing = isBearishCandle and bodySize >= candleSize * atr and close < open[1] and open > close[1]
+bool longUpperWick = upperWick >= lowerWick * 2 and upperWick >= bodySize and candleRange >= candleSize * atr
+
+bool bearishReversalCandle = shootingStar or bearishEngulfing or longUpperWick
+
+// Bullish reversal patterns (at bottoms)
+bool hammer = isBullishCandle and lowerWick >= bodySize * wickRatio and candleRange >= candleSize * atr
+bool bullishEngulfing = isBullishCandle and bodySize >= candleSize * atr and close > open[1] and open < close[1]
+bool longLowerWick = lowerWick >= upperWick * 2 and lowerWick >= bodySize and candleRange >= candleSize * atr
+
+bool bullishReversalCandle = hammer or bullishEngulfing or longLowerWick
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. ROC EXTREME (Momentum at extreme levels)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+roc = 100 * (close - close[rocPeriod]) / close[rocPeriod]
+rocPercentile = ta.percentrank(roc, rocLookback)
+
+bool rocExtremeBullish = rocPercentile <= (100 - rocExtremeAdj)  // Bottom percentile (oversold)
+bool rocExtremeBearish = rocPercentile >= rocExtremeAdj           // Top percentile (overbought)
+
+bool rocConditionLong = not requireRocExtreme or rocExtremeBullish
+bool rocConditionShort = not requireRocExtreme or rocExtremeBearish
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. VOLUME CLIMAX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+volMa = ta.sma(volume, volPeriod)
+bool volumeClimax = volume >= volMa * volMult
+
+// Volume declining after spike (exhaustion pattern) - improved logic
+bool volExhaustion = (volume[1] >= volMa[1] * volMult) and volume < volume[1]
+bool volExhaustionStrong = (volume[1] >= volMa[1] * volMult or volume[2] >= volMa[2] * volMult) and volume < ta.sma(volume, 3)[1]
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. MOMENTUM DECELERATION (Price slowing down)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Check if velocity is decreasing (deceleration)
+float prevVelocity = math.abs((close[1] - close[1 + velocityPeriod])) / atr[1]
+bool velocityDecreasing = priceVelocity < prevVelocity
+
+// Check if we're at a significant price extreme
+float priceHigh = ta.highest(high, priceExtremeLookback)
+float priceLow = ta.lowest(low, priceExtremeLookback)
+bool nearHighExtreme = high >= priceHigh or high >= priceHigh * 0.997  // Within 0.3% of high
+bool nearLowExtreme = low <= priceLow or low <= priceLow * 1.003        // Within 0.3% of low
+
+// Volatility filter - check if we're in an active market
+float atrRatio = atr / ta.sma(atr, 50)  // Current ATR vs long-term average
+bool volatilityOk = not useVolatilityFilter or atrRatio >= 0.7  // Require 70%+ of average volatility
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. COMPOSITE SIGNAL GENERATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// LONG Signal: After parabolic down move, see reversal signs
+int longScore = 0
+bool longHasVelocity = parabolicDown and sufficientMove
+bool longHasCandle = bullishReversalCandle
+
+if longHasVelocity
+    longScore += 2  // Strong weight for velocity
+if longHasCandle
+    longScore += 2  // Strong weight for reversal candle
+if longHasVelocity and longHasCandle
+    longScore += 1  // Bonus for having BOTH core conditions
+if rocConditionLong
+    longScore += 1
+if volumeClimax or volExhaustionStrong
+    longScore += 1
+if velocityDecreasing
+    longScore += 1
+if nearLowExtreme
+    longScore += 1  // Bonus point for being at price extreme
+
+// SHORT Signal: After parabolic up move, see reversal signs  
+int shortScore = 0
+bool shortHasVelocity = parabolicUp and sufficientMove
+bool shortHasCandle = bearishReversalCandle
+
+if shortHasVelocity
+    shortScore += 2  // Strong weight for velocity
+if shortHasCandle
+    shortScore += 2  // Strong weight for reversal candle
+if shortHasVelocity and shortHasCandle
+    shortScore += 1  // Bonus for having BOTH core conditions
+if rocConditionShort
+    shortScore += 1
+if volumeClimax or volExhaustionStrong
+    shortScore += 1
+if velocityDecreasing
+    shortScore += 1
+if nearHighExtreme
+    shortScore += 1  // Bonus point for being at price extreme
+
+// CONFIDENCE LEVEL SYSTEM (15m optimized)
+// ═══════════════════════════════════════════════════════════════════════════════
+// L3/S3 = 5-7+ points (Highest confidence)
+// L2/S2 = 4 points (Medium confidence)
+// L1/S1 = 3 points (Lower confidence - aggressive only)
+
+int minScoreRequired = minConfidenceLevel == "L3/S3 (High only)" ? 5 : 
+     minConfidenceLevel == "L2/S2 (Medium)" ? 4 : 3
+
+// Determine confidence levels
+int longConfidence = longScore >= 5 ? 3 : longScore == 4 ? 2 : longScore == 3 ? 1 : 0
+int shortConfidence = shortScore >= 5 ? 3 : shortScore == 4 ? 2 : shortScore == 3 ? 1 : 0
+
+// Core requirements check
+bool longCoreOk = not requireBothCore or (longHasVelocity and longHasCandle)
+bool shortCoreOk = not requireBothCore or (shortHasVelocity and shortHasCandle)
+
+bool longSignalRaw = longScore >= minScoreRequired and longCoreOk and volatilityOk and longConfidence > 0
+bool shortSignalRaw = shortScore >= minScoreRequired and shortCoreOk and volatilityOk and shortConfidence > 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 7. FILTERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var int lastSignalBar = na
+bool cooldownOk = cooldownBars == 0 or na(lastSignalBar) or (bar_index - lastSignalBar) > cooldownBars
+
+bool longSignal = longSignalRaw and cooldownOk and longScore > shortScore
+bool shortSignal = shortSignalRaw and cooldownOk and shortScore > longScore
+
+if longSignal or shortSignal
+    lastSignalBar := bar_index
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUAL SIGNALS WITH CONFIDENCE LEVELS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool showTriangles = signalStyle == "Triangles Only" or signalStyle == "Both"
+bool showLabels = signalStyle == "Labels with Confidence" or signalStyle == "Both"
+
+// Confidence-based colors (darker, more readable)
+color longColorL3 = showConfidenceColors ? #00A855 : #00A855  // Dark green (high confidence)
+color longColorL2 = showConfidenceColors ? #008544 : #008544  // Darker green (medium)
+color longColorL1 = showConfidenceColors ? #006633 : #006633  // Darkest green (low)
+
+color shortColorS3 = showConfidenceColors ? #CC0000 : #CC0000  // Dark red (high confidence)
+color shortColorS2 = showConfidenceColors ? #AA0000 : #AA0000  // Darker red (medium)
+color shortColorS1 = showConfidenceColors ? #880000 : #880000  // Darkest red (low)
+
+// Text colors (readable on dark backgrounds)
+color longTextColor = color.new(#FFFFFF, 0)   // White on dark green
+color shortTextColor = color.new(#FFFFFF, 0)  // White on dark red
+
+// Determine which confidence level triggered
+bool longL3 = longSignal and longConfidence == 3
+bool longL2 = longSignal and longConfidence == 2
+bool longL1 = longSignal and longConfidence == 1
+
+bool shortS3 = shortSignal and shortConfidence == 3
+bool shortS2 = shortSignal and shortConfidence == 2
+bool shortS1 = shortSignal and shortConfidence == 1
+
+// Triangles with confidence colors - Small size
+plotshape(showTriangles and longL3 and labelSize == "Small", title="L3 ▲", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL3, 0), size=size.small)
+plotshape(showTriangles and longL2 and labelSize == "Small", title="L2 ▲", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL2, 0), size=size.small)
+plotshape(showTriangles and longL1 and labelSize == "Small", title="L1 ▲", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL1, 0), size=size.small)
+
+plotshape(showTriangles and shortS3 and labelSize == "Small", title="S3 ▼", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS3, 0), size=size.small)
+plotshape(showTriangles and shortS2 and labelSize == "Small", title="S2 ▼", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS2, 0), size=size.small)
+plotshape(showTriangles and shortS1 and labelSize == "Small", title="S1 ▼", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS1, 0), size=size.small)
+
+// Triangles - Tiny size
+plotshape(showTriangles and longL3 and labelSize == "Tiny", title="L3 ▲ tiny", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL3, 0), size=size.tiny)
+plotshape(showTriangles and longL2 and labelSize == "Tiny", title="L2 ▲ tiny", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL2, 0), size=size.tiny)
+plotshape(showTriangles and longL1 and labelSize == "Tiny", title="L1 ▲ tiny", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL1, 0), size=size.tiny)
+
+plotshape(showTriangles and shortS3 and labelSize == "Tiny", title="S3 ▼ tiny", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS3, 0), size=size.tiny)
+plotshape(showTriangles and shortS2 and labelSize == "Tiny", title="S2 ▼ tiny", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS2, 0), size=size.tiny)
+plotshape(showTriangles and shortS1 and labelSize == "Tiny", title="S1 ▼ tiny", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS1, 0), size=size.tiny)
+
+// Triangles - Normal size
+plotshape(showTriangles and longL3 and labelSize == "Normal", title="L3 ▲ normal", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL3, 0), size=size.normal)
+plotshape(showTriangles and longL2 and labelSize == "Normal", title="L2 ▲ normal", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL2, 0), size=size.normal)
+plotshape(showTriangles and longL1 and labelSize == "Normal", title="L1 ▲ normal", 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.new(longColorL1, 0), size=size.normal)
+
+plotshape(showTriangles and shortS3 and labelSize == "Normal", title="S3 ▼ normal", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS3, 0), size=size.normal)
+plotshape(showTriangles and shortS2 and labelSize == "Normal", title="S2 ▼ normal", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS2, 0), size=size.normal)
+plotshape(showTriangles and shortS1 and labelSize == "Normal", title="S1 ▼ normal", 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.new(shortColorS1, 0), size=size.normal)
+
+// Confidence-based text labels
+if showLabels
+    // LONG labels with confidence levels
+    if longL3
+        if labelSize == "Tiny"
+            label.new(bar_index, low, text="L3", style=label.style_label_up, 
+                 color=longColorL3, textcolor=longTextColor, size=size.tiny)
+        else if labelSize == "Normal"
+            label.new(bar_index, low, text="L3", style=label.style_label_up, 
+                 color=longColorL3, textcolor=longTextColor, size=size.normal)
+        else
+            label.new(bar_index, low, text="L3", style=label.style_label_up, 
+                 color=longColorL3, textcolor=longTextColor, size=size.small)
+    
+    if longL2
+        if labelSize == "Tiny"
+            label.new(bar_index, low, text="L2", style=label.style_label_up, 
+                 color=longColorL2, textcolor=longTextColor, size=size.tiny)
+        else if labelSize == "Normal"
+            label.new(bar_index, low, text="L2", style=label.style_label_up, 
+                 color=longColorL2, textcolor=longTextColor, size=size.normal)
+        else
+            label.new(bar_index, low, text="L2", style=label.style_label_up, 
+                 color=longColorL2, textcolor=longTextColor, size=size.small)
+    
+    if longL1
+        if labelSize == "Tiny"
+            label.new(bar_index, low, text="L1", style=label.style_label_up, 
+                 color=longColorL1, textcolor=longTextColor, size=size.tiny)
+        else if labelSize == "Normal"
+            label.new(bar_index, low, text="L1", style=label.style_label_up, 
+                 color=longColorL1, textcolor=longTextColor, size=size.normal)
+        else
+            label.new(bar_index, low, text="L1", style=label.style_label_up, 
+                 color=longColorL1, textcolor=longTextColor, size=size.small)
+    
+    // SHORT labels with confidence levels
+    if shortS3
+        if labelSize == "Tiny"
+            label.new(bar_index, high, text="S3", style=label.style_label_down, 
+                 color=shortColorS3, textcolor=shortTextColor, size=size.tiny)
+        else if labelSize == "Normal"
+            label.new(bar_index, high, text="S3", style=label.style_label_down, 
+                 color=shortColorS3, textcolor=shortTextColor, size=size.normal)
+        else
+            label.new(bar_index, high, text="S3", style=label.style_label_down, 
+                 color=shortColorS3, textcolor=shortTextColor, size=size.small)
+    
+    if shortS2
+        if labelSize == "Tiny"
+            label.new(bar_index, high, text="S2", style=label.style_label_down, 
+                 color=shortColorS2, textcolor=shortTextColor, size=size.tiny)
+        else if labelSize == "Normal"
+            label.new(bar_index, high, text="S2", style=label.style_label_down, 
+                 color=shortColorS2, textcolor=shortTextColor, size=size.normal)
+        else
+            label.new(bar_index, high, text="S2", style=label.style_label_down, 
+                 color=shortColorS2, textcolor=shortTextColor, size=size.small)
+    
+    if shortS1
+        if labelSize == "Tiny"
+            label.new(bar_index, high, text="S1", style=label.style_label_down, 
+                 color=shortColorS1, textcolor=shortTextColor, size=size.tiny)
+        else if labelSize == "Normal"
+            label.new(bar_index, high, text="S1", style=label.style_label_down, 
+                 color=shortColorS1, textcolor=shortTextColor, size=size.normal)
+        else
+            label.new(bar_index, high, text="S1", style=label.style_label_down, 
+                 color=shortColorS1, textcolor=shortTextColor, size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEBUG TABLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if debugMode
+    var table debugTable = table.new(position.top_right, 3, 20, border_width=1)
+    
+    if barstate.islast
+        table.cell(debugTable, 0, 0, "Condition", text_color=color.white, bgcolor=color.gray)
+        table.cell(debugTable, 1, 0, "Bullish", text_color=color.white, bgcolor=color.gray)
+        table.cell(debugTable, 2, 0, "Bearish", text_color=color.white, bgcolor=color.gray)
+        
+        table.cell(debugTable, 0, 1, "Parabolic Move", text_color=color.white)
+        table.cell(debugTable, 1, 1, parabolicDown ? "✓ (2pts)" : "✗", 
+             text_color=parabolicDown ? color.lime : color.red)
+        table.cell(debugTable, 2, 1, parabolicUp ? "✓ (2pts)" : "✗", 
+             text_color=parabolicUp ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 2, "Reversal Candle", text_color=color.white)
+        table.cell(debugTable, 1, 2, bullishReversalCandle ? "✓ (2pts)" : "✗", 
+             text_color=bullishReversalCandle ? color.lime : color.red)
+        table.cell(debugTable, 2, 2, bearishReversalCandle ? "✓ (2pts)" : "✗", 
+             text_color=bearishReversalCandle ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 3, "ROC Extreme", text_color=color.white)
+        table.cell(debugTable, 1, 3, rocConditionLong ? "✓ (1pt)" : "✗", 
+             text_color=rocConditionLong ? color.lime : color.red)
+        table.cell(debugTable, 2, 3, rocConditionShort ? "✓ (1pt)" : "✗", 
+             text_color=rocConditionShort ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 4, "Volume Climax", text_color=color.white)
+        table.cell(debugTable, 1, 4, volumeClimax ? "✓ (1pt)" : "✗", 
+             text_color=volumeClimax ? color.lime : color.red)
+        table.cell(debugTable, 2, 4, volumeClimax ? "✓ (1pt)" : "✗", 
+             text_color=volumeClimax ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 5, "Deceleration", text_color=color.white)
+        table.cell(debugTable, 1, 5, velocityDecreasing ? "✓ (1pt)" : "✗", 
+             text_color=velocityDecreasing ? color.lime : color.red)
+        table.cell(debugTable, 2, 5, velocityDecreasing ? "✓ (1pt)" : "✗", 
+             text_color=velocityDecreasing ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 6, "Price Extreme", text_color=color.white)
+        table.cell(debugTable, 1, 6, nearLowExtreme ? "✓ (1pt)" : "✗", 
+             text_color=nearLowExtreme ? color.lime : color.red)
+        table.cell(debugTable, 2, 6, nearHighExtreme ? "✓ (1pt)" : "✗", 
+             text_color=nearHighExtreme ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 7, "───────────", text_color=color.gray)
+        table.cell(debugTable, 1, 7, "─────", text_color=color.gray)
+        table.cell(debugTable, 2, 7, "─────", text_color=color.gray)
+        
+        table.cell(debugTable, 0, 8, "SCORE / Required", text_color=color.white)
+        table.cell(debugTable, 1, 8, str.tostring(longScore) + " / " + str.tostring(minScoreRequired), 
+             text_color=longScore >= minScoreRequired ? color.lime : color.orange)
+        table.cell(debugTable, 2, 8, str.tostring(shortScore) + " / " + str.tostring(minScoreRequired), 
+             text_color=shortScore >= minScoreRequired ? color.lime : color.orange)
+        
+        table.cell(debugTable, 0, 9, "Core (Vel+Candle)", text_color=color.white)
+        table.cell(debugTable, 1, 9, longCoreOk ? "✓" : "✗ BLOCKING", 
+             text_color=longCoreOk ? color.lime : color.red)
+        table.cell(debugTable, 2, 9, shortCoreOk ? "✓" : "✗ BLOCKING", 
+             text_color=shortCoreOk ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 10, "Cooldown", text_color=color.white)
+        table.cell(debugTable, 1, 10, cooldownOk ? "✓" : "✗ BLOCKING", 
+             text_color=cooldownOk ? color.lime : color.red)
+        table.cell(debugTable, 2, 10, cooldownOk ? "✓" : "✗ BLOCKING", 
+             text_color=cooldownOk ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 11, "Volatility Filter", text_color=color.white)
+        table.cell(debugTable, 1, 11, volatilityOk ? "✓" : "✗ BLOCKING", 
+             text_color=volatilityOk ? color.lime : color.red)
+        table.cell(debugTable, 2, 11, volatilityOk ? "✓" : "✗ BLOCKING", 
+             text_color=volatilityOk ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 12, "───────────", text_color=color.gray)
+        table.cell(debugTable, 1, 12, "─────", text_color=color.gray)
+        table.cell(debugTable, 2, 12, "─────", text_color=color.gray)
+        
+        table.cell(debugTable, 0, 13, "CONFIDENCE LEVEL", text_color=color.white, bgcolor=color.navy)
+        string longText = longL3 ? "🚀 L3" : longL2 ? "🚀 L2" : longL1 ? "🚀 L1" : "—"
+        string shortText = shortS3 ? "🔻 S3" : shortS2 ? "🔻 S2" : shortS1 ? "🔻 S1" : "—"
+        table.cell(debugTable, 1, 13, longText, 
+             text_color=color.white, bgcolor=longSignal ? color.green : color.navy)
+        table.cell(debugTable, 2, 13, shortText, 
+             text_color=color.white, bgcolor=shortSignal ? color.red : color.navy)
+        
+        table.cell(debugTable, 0, 14, "───────────", text_color=color.gray)
+        table.cell(debugTable, 1, 14, "─────", text_color=color.gray)
+        table.cell(debugTable, 2, 14, "─────", text_color=color.gray)
+        
+        table.cell(debugTable, 0, 15, "Price Velocity", text_color=color.white)
+        table.cell(debugTable, 1, 15, str.tostring(priceVelocity, "#.##") + "x ATR", text_color=color.orange)
+        table.cell(debugTable, 2, 15, "", text_color=color.white)
+        
+        table.cell(debugTable, 0, 16, "ROC Percentile", text_color=color.white)
+        table.cell(debugTable, 1, 16, str.tostring(rocPercentile, "#.##") + "%", text_color=color.orange)
+        table.cell(debugTable, 2, 16, "", text_color=color.white)
+        
+        table.cell(debugTable, 0, 17, "Volume Ratio", text_color=color.white)
+        table.cell(debugTable, 1, 17, volMa > 0 ? str.tostring(volume/volMa, "#.##") + "x" : "—", text_color=color.orange)
+        table.cell(debugTable, 2, 17, "", text_color=color.white)
+        
+        table.cell(debugTable, 0, 18, "ATR Ratio", text_color=color.white)
+        table.cell(debugTable, 1, 18, str.tostring(atrRatio, "#.##") + "x", text_color=color.orange)
+        table.cell(debugTable, 2, 18, "", text_color=color.white)
+        
+        table.cell(debugTable, 0, 19, "Candle Type", text_color=color.white)
+        string candleType = shootingStar ? "Shooting Star" : 
+             bearishEngulfing ? "Bear Engulf" : 
+             longUpperWick ? "Long U-Wick" :
+             hammer ? "Hammer" :
+             bullishEngulfing ? "Bull Engulf" :
+             longLowerWick ? "Long L-Wick" : "Regular"
+        table.cell(debugTable, 1, 19, candleType, text_color=color.orange)
+        table.cell(debugTable, 2, 19, "", text_color=color.white)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(longL3, title="L3 - High Confidence Long", message="L3 (High Confidence): Parabolic bottom on {{ticker}} {{interval}}")
+alertcondition(longL2, title="L2 - Medium Confidence Long", message="L2 (Medium Confidence): Parabolic bottom on {{ticker}} {{interval}}")
+alertcondition(longL1, title="L1 - Low Confidence Long", message="L1 (Lower Confidence): Parabolic bottom on {{ticker}} {{interval}}")
+
+alertcondition(shortS3, title="S3 - High Confidence Short", message="S3 (High Confidence): Parabolic top on {{ticker}} {{interval}}")
+alertcondition(shortS2, title="S2 - Medium Confidence Short", message="S2 (Medium Confidence): Parabolic top on {{ticker}} {{interval}}")
+alertcondition(shortS1, title="S1 - Low Confidence Short", message="S1 (Lower Confidence): Parabolic top on {{ticker}} {{interval}}")
