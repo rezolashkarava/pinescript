@@ -1,0 +1,398 @@
+//@version=6
+indicator("Parabolic Exhaustion Reversal Pro [Paganie] v3.0", shorttitle="PE-RP v3.0", format=format.price, precision=1)
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// Parabolic Exhaustion Reversal Pro [Paganie] v3.0
+// Target: Altcoin reversals, auto-adapts 1m → 4h
+// TF <= 15m: scalp reversal behavior
+// TF > 15m:  swing reversal behavior
+// ══════════════════════════════════════════════════════════════════════════════════
+
+// ─────── Signal Settings ───────
+string G1 = "📊 Signal Settings"
+
+string modeInput = input.string("Auto", "Mode", options=["Auto", "Scalp", "Swing"], group=G1,
+     tooltip="Auto: <=15m scalp, >15m swing\nScalp: more reactive\nSwing: stricter confirmation")
+
+string signalMode = input.string("Balanced", "Sensitivity", options=["Conservative", "Balanced", "Aggressive"], group=G1,
+     tooltip="Conservative: fewer, later, cleaner\nBalanced: default\nAggressive: earlier, noisier")
+
+int smoothingPeriod = input.int(3, "Smoothing", minval=1, maxval=10, group=G1)
+int signalCooldown = input.int(3, "Min Bars Between Signals", minval=0, maxval=50, group=G1)
+
+// ─────── Filters ───────
+string G2 = "🔍 Filters"
+bool useMultiTimeframe = input.bool(true, "Higher Timeframe Check", group=G2)
+bool useTrendFilter = input.bool(false, "Trend Filter (EMA 50/200)", group=G2)
+bool showDivergences = input.bool(false, "Divergence Alerts", group=G2)
+
+bool useVolatilityFilter = input.bool(true, "Low-Volatility Filter", group=G2,
+     tooltip="Blocks signals when ATR% is too low (compression/chop)")
+
+bool useChopFilterSwing = input.bool(true, "Chop Filter (Swing Only)", group=G2,
+     tooltip="Swing mode blocks reversals in choppy/ranging structure")
+
+// ─────── Alert Preferences ───────
+string G2A = "🔔 Alert Preferences"
+bool alertPremiumSignals = input.bool(true, "🔥 Premium Signals", group=G2A, inline="a1")
+bool alertHighSignals = input.bool(true, "⚡ High Quality Signals", group=G2A, inline="a1")
+bool alertStandardSignals = input.bool(false, "✓ Standard Signals", group=G2A, inline="a2")
+bool alertZoneWarnings = input.bool(false, "📍 Zone Warnings", group=G2A, inline="a2")
+
+// ─────── Display ───────
+string G3 = "🎨 Display"
+color bullishColor = input.color(#00C896, "Bullish", group=G3, inline="c1")
+color bearishColor = input.color(#FF5252, "Bearish", group=G3, inline="c1")
+bool showThresholdZones = input.bool(true, "Show Threshold Zones", group=G3)
+
+// ─────── Advanced ───────
+string G4 = "⚙️ Advanced"
+bool autoTimeframeAdapt = input.bool(true, "Auto Timeframe Optimization", group=G4)
+int minimumScoreOverride = input.int(0, "Min Score Override", minval=0, maxval=12, group=G4)
+
+float lowVolCutoffOverride = input.float(0.0, "ATR% Cutoff Override", minval=0.0, step=0.05, group=G4)
+int confirmationsOverride = input.int(0, "Confirmations Override", minval=0, maxval=5, group=G4)
+bool extraConfirmationInChop = input.bool(true, "Extra Confirmation In Chop", group=G4)
+bool requireReversalCandleConservative = input.bool(true, "Require Reversal Candle (Conservative)", group=G4)
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// TIMEFRAME + MODE
+// ══════════════════════════════════════════════════════════════════════════════════
+
+int tfMinutes = timeframe.in_seconds() / 60
+float tfMultiplier = math.sqrt(tfMinutes / 15.0)
+
+bool isScalpAuto = tfMinutes <= 15
+bool isScalp = modeInput == "Auto" ? isScalpAuto : modeInput == "Scalp"
+
+int sensitivity = signalMode == "Conservative" ? 60 : signalMode == "Aggressive" ? 80 : 70
+float sensitivityFactor = 1.0 + ((sensitivity - 70) / 100.0)
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// ADAPTIVE PARAMETERS
+// ══════════════════════════════════════════════════════════════════════════════════
+
+float thresholdMultiplier =
+     tfMinutes <= 1 ? 1.8 * sensitivityFactor :
+     tfMinutes <= 5 ? 1.3 * sensitivityFactor :
+     tfMinutes <= 15 ? 1.0 * sensitivityFactor :
+     tfMinutes <= 60 ? 0.85 * sensitivityFactor :
+     0.75 * sensitivityFactor
+
+int atrPeriod = autoTimeframeAdapt ? int(math.max(7, math.round(14 * tfMultiplier))) : 14
+float atr = ta.atr(atrPeriod)
+float atrPercent = close != 0 ? (atr / close) * 100 : 0
+
+int velocityPeriod = autoTimeframeAdapt ? int(math.max(2, math.round((isScalp ? 3 : 5) * tfMultiplier))) : (isScalp ? 3 : 5)
+float velocityThreshold = (isScalp ? 1.7 : 1.9) * thresholdMultiplier
+
+int rocPeriod = autoTimeframeAdapt ? int(math.max(2, math.round((isScalp ? 6 : 10) * tfMultiplier))) : (isScalp ? 6 : 10)
+int rocLookback = autoTimeframeAdapt ? int(math.max(40, math.round((isScalp ? 120 : 180) * tfMultiplier))) : (isScalp ? 120 : 180)
+
+int volRankLen = autoTimeframeAdapt ? int(math.max(100, math.round(200 * tfMultiplier))) : 200
+int volMaLen = autoTimeframeAdapt ? int(math.max(10, math.round(20 * tfMultiplier))) : 20
+
+int extremeLookback = autoTimeframeAdapt ? int(math.max(20, math.round((isScalp ? 35 : 55) * tfMultiplier))) : (isScalp ? 35 : 55)
+
+int dmiLen = autoTimeframeAdapt ? int(math.max(10, math.round(14 * tfMultiplier))) : 14
+[diPlus, diMinus, adx] = ta.dmi(dmiLen, dmiLen)
+
+int erLen = autoTimeframeAdapt ? int(math.max(8, math.round((isScalp ? 10 : 20) * tfMultiplier))) : (isScalp ? 10 : 20)
+float erDen = math.sum(math.abs(ta.change(close)), erLen)
+float er = erDen != 0 ? math.abs(close - close[erLen]) / erDen : 0
+
+int chopLen = autoTimeframeAdapt ? int(math.max(10, math.round((isScalp ? 14 : 20) * tfMultiplier))) : (isScalp ? 14 : 20)
+float trSum = math.sum(ta.tr(true), chopLen)
+float rangeN = ta.highest(high, chopLen) - ta.lowest(low, chopLen)
+float chop = rangeN != 0 and chopLen > 1 ? 100 * math.log10(trSum / rangeN) / math.log10(chopLen) : 100
+
+bool isTrending = adx > (isScalp ? 23 : 25) and er > (isScalp ? 0.45 : 0.50) and chop < (isScalp ? 55 : 52)
+bool isHighVolatility = atrPercent > (isScalp ? 1.2 : 1.6)
+
+float ema50 = ta.ema(close, 50)
+float ema200 = ta.ema(close, 200)
+bool bullishRegime = ema50 > ema200
+bool bearishRegime = ema50 < ema200
+
+// Volatility filter (compression)
+float lowVolCutoffAuto = autoTimeframeAdapt ? (tfMinutes <= 5 ? 0.25 : tfMinutes <= 60 ? 0.35 : 0.5) : 0.35
+float lowVolCutoff = lowVolCutoffOverride > 0 ? lowVolCutoffOverride : lowVolCutoffAuto
+bool volatilityOk = atrPercent >= lowVolCutoff
+bool volatilityFilterOk = not useVolatilityFilter ? true : (signalMode == "Aggressive" ? true : volatilityOk)
+
+// Swing chop filter
+bool chopOk = not (not isScalp and useChopFilterSwing) ? true : chop < (autoTimeframeAdapt ? (tfMinutes <= 60 ? 61 : 58) : 60)
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// CORE FEATURES
+// ══════════════════════════════════════════════════════════════════════════════════
+
+// Price velocity (parabolic move)
+float priceChange = close - close[velocityPeriod]
+float priceVelocity = atr > 0 ? math.abs(priceChange) / atr : 0
+bool parabolicUp = priceChange > 0 and priceVelocity >= velocityThreshold
+bool parabolicDown = priceChange < 0 and priceVelocity >= velocityThreshold
+
+// Candle anatomy / reversal strength
+float bodySize = math.abs(close - open)
+float upperWick = high - math.max(close, open)
+float lowerWick = math.min(close, open) - low
+float candleRange = high - low
+
+bool isBullishCandle = close > open
+bool isBearishCandle = close < open
+
+float wickRatio = isScalp ? 0.45 : 0.55
+float minRangeAtr = (isScalp ? 0.55 : 0.70) * thresholdMultiplier
+
+bool shootingStar = isBearishCandle and upperWick >= bodySize * wickRatio and candleRange >= minRangeAtr * atr
+bool hammer = isBullishCandle and lowerWick >= bodySize * wickRatio and candleRange >= minRangeAtr * atr
+
+bool bearishReversalCandle = shootingStar or (upperWick >= lowerWick * 2 and upperWick >= bodySize and candleRange >= minRangeAtr * atr)
+bool bullishReversalCandle = hammer or (lowerWick >= upperWick * 2 and lowerWick >= bodySize and candleRange >= minRangeAtr * atr)
+
+// ROC extreme (percentile)
+float roc = close[rocPeriod] != 0 ? 100 * (close - close[rocPeriod]) / close[rocPeriod] : 0
+float rocPercentile = ta.percentrank(roc, rocLookback)
+bool rocExtremeBullish = rocPercentile <= (isScalp ? 18 : 15)
+bool rocExtremeBearish = rocPercentile >= (isScalp ? 82 : 85)
+
+// Volume (altcoin-friendly: MA + percentile)
+float volMa = ta.sma(volume, volMaLen)
+float volPercentile = ta.percentrank(volume, volRankLen)
+bool volumeClimax = volume >= volMa * 1.25
+bool exceptionalVolume = volPercentile >= 95
+float volumeWeight = exceptionalVolume ? 1.5 : 1.0
+
+// Momentum deceleration (velocity falling)
+float prevVelocity1 = atr[1] > 0 ? math.abs(close[1] - close[1 + velocityPeriod]) / atr[1] : 0
+float prevVelocity2 = atr[2] > 0 ? math.abs(close[2] - close[2 + velocityPeriod]) / atr[2] : 0
+bool velocityDecreasing = priceVelocity < prevVelocity1 and priceVelocity < ((prevVelocity1 + prevVelocity2) / 2)
+
+// Price extremes
+float priceHigh = ta.highest(high, extremeLookback)
+float priceLow = ta.lowest(low, extremeLookback)
+bool nearHighExtreme = atr > 0 and high >= (priceHigh - (isScalp ? 0.8 : 0.7) * atr)
+bool nearLowExtreme = atr > 0 and low <= (priceLow + (isScalp ? 0.8 : 0.7) * atr)
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE (pivot-based, fixed)
+// ══════════════════════════════════════════════════════════════════════════════════
+
+int divLookback = 5
+float oscForDiv = priceVelocity
+float oscPivotLow = ta.pivotlow(oscForDiv, divLookback, divLookback)
+float oscPivotHigh = ta.pivothigh(oscForDiv, divLookback, divLookback)
+float pricePivotLow = ta.pivotlow(low, divLookback, divLookback)
+float pricePivotHigh = ta.pivothigh(high, divLookback, divLookback)
+
+var float prevOscLow = na
+var float prevPriceLow = na
+var float prevOscHigh = na
+var float prevPriceHigh = na
+
+bool bullishDivergence = false
+bool bearishDivergence = false
+
+if not na(oscPivotLow) and not na(pricePivotLow)
+    bullishDivergence := not na(prevOscLow) and not na(prevPriceLow) and pricePivotLow < prevPriceLow and oscPivotLow > prevOscLow
+    prevOscLow := oscPivotLow
+    prevPriceLow := pricePivotLow
+
+if not na(oscPivotHigh) and not na(pricePivotHigh)
+    bearishDivergence := not na(prevOscHigh) and not na(prevPriceHigh) and pricePivotHigh > prevPriceHigh and oscPivotHigh < prevOscHigh
+    prevOscHigh := oscPivotHigh
+    prevPriceHigh := pricePivotHigh
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// MTF VALIDATION
+// ══════════════════════════════════════════════════════════════════════════════════
+
+string htf = tfMinutes <= 1 ? "5" : tfMinutes <= 5 ? "15" : tfMinutes <= 15 ? "60" : tfMinutes <= 60 ? "240" : "D"
+
+[htfTrendUp, htfChop] = request.security(syminfo.tickerid, htf,
+     [ta.ema(close, 50) > ta.ema(close, 200), chop], lookahead=barmerge.lookahead_off)
+
+bool htfSupportsLong = useMultiTimeframe ? (htfTrendUp or htfChop > 55) : true
+bool htfSupportsShort = useMultiTimeframe ? (not htfTrendUp or htfChop > 55) : true
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// SCORING (with penalties)
+// ══════════════════════════════════════════════════════════════════════════════════
+
+float longScore = 0.0
+if parabolicDown
+    longScore += 2.0
+if bullishReversalCandle
+    longScore += 2.0
+if parabolicDown and bullishReversalCandle
+    longScore += 1.0
+if rocExtremeBullish
+    longScore += 1.0
+if volumeClimax or exceptionalVolume
+    longScore += volumeWeight
+if velocityDecreasing
+    longScore += 1.0
+if nearLowExtreme
+    longScore += (isScalp ? 0.8 : 1.2)
+if bullishDivergence
+    longScore += 0.8
+
+float shortScore = 0.0
+if parabolicUp
+    shortScore += 2.0
+if bearishReversalCandle
+    shortScore += 2.0
+if parabolicUp and bearishReversalCandle
+    shortScore += 1.0
+if rocExtremeBearish
+    shortScore += 1.0
+if volumeClimax or exceptionalVolume
+    shortScore += volumeWeight
+if velocityDecreasing
+    shortScore += 1.0
+if nearHighExtreme
+    shortScore += (isScalp ? 0.8 : 1.2)
+if bearishDivergence
+    shortScore += 0.8
+
+// Penalties: strong trend continuation risk
+bool downTrendStrong = isTrending and diMinus > diPlus
+bool upTrendStrong = isTrending and diPlus > diMinus
+
+bool allowCatchKnife = exceptionalVolume and (bullishReversalCandle or bearishReversalCandle)
+if downTrendStrong and parabolicDown and not allowCatchKnife
+    longScore -= (isScalp ? 0.8 : 1.5)
+if upTrendStrong and parabolicUp and not allowCatchKnife
+    shortScore -= (isScalp ? 0.8 : 1.5)
+
+// Penalty: swing mode dislikes chop
+if not isScalp and useChopFilterSwing and chop >= 62
+    longScore -= 1.0
+if not isScalp and useChopFilterSwing and chop >= 62
+    shortScore -= 1.0
+
+longScore := math.max(longScore, 0.0)
+shortScore := math.max(shortScore, 0.0)
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// CONFIRMATIONS
+// ══════════════════════════════════════════════════════════════════════════════════
+
+float rsi = ta.rsi(close, 14)
+
+int minScoreBase = signalMode == "Conservative" ? (isScalp ? 6 : 7) : signalMode == "Aggressive" ? (isScalp ? 5 : 6) : (isScalp ? 5 : 6)
+int minScoreRequired = minimumScoreOverride > 0 ? minimumScoreOverride : minScoreBase
+
+bool requireReversalCandle = signalMode == "Conservative" and requireReversalCandleConservative
+
+int minConfirmationsAuto = isScalp ? (signalMode == "Conservative" ? 3 : 2) : (signalMode == "Conservative" ? 4 : 3)
+int minConfirmationsBase = confirmationsOverride > 0 ? confirmationsOverride : minConfirmationsAuto
+int minConfirmationsRequired = minConfirmationsBase
+if extraConfirmationInChop and not isTrending and not isHighVolatility
+    minConfirmationsRequired += 1
+minConfirmationsRequired := math.min(minConfirmationsRequired, 5)
+
+bool longC1 = longScore >= minScoreRequired
+bool longC2 = bullishReversalCandle or nearLowExtreme
+bool longC3 = velocityDecreasing
+bool longC4 = (volumeClimax or exceptionalVolume)
+bool longC5 = (rsi < (isScalp ? 38 : 42)) or bullishDivergence
+
+int longConf = (longC1 ? 1 : 0) + (longC2 ? 1 : 0) + (longC3 ? 1 : 0) + (longC4 ? 1 : 0) + (longC5 ? 1 : 0)
+
+bool shortC1 = shortScore >= minScoreRequired
+bool shortC2 = bearishReversalCandle or nearHighExtreme
+bool shortC3 = velocityDecreasing
+bool shortC4 = (volumeClimax or exceptionalVolume)
+bool shortC5 = (rsi > (isScalp ? 62 : 58)) or bearishDivergence
+
+int shortConf = (shortC1 ? 1 : 0) + (shortC2 ? 1 : 0) + (shortC3 ? 1 : 0) + (shortC4 ? 1 : 0) + (shortC5 ? 1 : 0)
+
+bool trendOkLong = useTrendFilter ? (not bearishRegime or bullishDivergence) : true
+bool trendOkShort = useTrendFilter ? (not bullishRegime or bearishDivergence) : true
+
+bool longSetup = parabolicDown and longScore >= minScoreRequired and longConf >= minConfirmationsRequired and trendOkLong and htfSupportsLong and volatilityFilterOk and chopOk and (not requireReversalCandle or bullishReversalCandle)
+bool shortSetup = parabolicUp and shortScore >= minScoreRequired and shortConf >= minConfirmationsRequired and trendOkShort and htfSupportsShort and volatilityFilterOk and chopOk and (not requireReversalCandle or bearishReversalCandle)
+
+var int lastSignalBar = na
+bool cooldownOk = signalCooldown == 0 or na(lastSignalBar) or (bar_index - lastSignalBar) >= signalCooldown
+
+bool longSignal = longSetup and cooldownOk and longScore >= shortScore and barstate.isconfirmed
+bool shortSignal = shortSetup and cooldownOk and shortScore > longScore and barstate.isconfirmed
+
+if longSignal or shortSignal
+    lastSignalBar := bar_index
+
+int longConfidence = longScore >= (minScoreRequired + 2) ? 3 : longScore >= (minScoreRequired + 1) ? 2 : 1
+int shortConfidence = shortScore >= (minScoreRequired + 2) ? 3 : shortScore >= (minScoreRequired + 1) ? 2 : 1
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// OSCILLATOR
+// ══════════════════════════════════════════════════════════════════════════════════
+
+float rawOsc = 50.0
+
+if parabolicDown and longScore >= minScoreRequired
+    rawOsc := 50.0 - math.min(50.0, (longScore / 12.0) * 50.0)
+else if parabolicUp and shortScore >= minScoreRequired
+    rawOsc := 50.0 + math.min(50.0, (shortScore / 12.0) * 50.0)
+else if longScore > 0 and not parabolicUp
+    rawOsc := 50.0 - math.min(20.0, (longScore / 12.0) * 20.0)
+else if shortScore > 0 and not parabolicDown
+    rawOsc := 50.0 + math.min(20.0, (shortScore / 12.0) * 20.0)
+else
+    rawOsc := na(rawOsc[1]) ? 50.0 : (math.abs(rawOsc[1] - 50.0) < 2 ? 50.0 : rawOsc[1] * 0.70 + 50.0 * 0.30)
+
+float osc = smoothingPeriod > 1 ? ta.ema(rawOsc, smoothingPeriod) : rawOsc
+
+// Zones (volatility-adjusted)
+float volatilityAdj = isHighVolatility ? 1.2 : 1.0
+float baseZone = (isScalp ? 18.0 : 20.0) * volatilityAdj
+float upperZone = 50 + baseZone
+float lowerZone = 50 - baseZone
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// VISUALS
+// ══════════════════════════════════════════════════════════════════════════════════
+
+plot(100, "Upper Bound", color.new(bearishColor, 70), 1)
+plot(showThresholdZones ? upperZone : na, "Overbought Zone", color.new(bearishColor, 60), 1, plot.style_circles)
+plot(50, "Centerline", color.new(color.gray, 70), 1)
+plot(showThresholdZones ? lowerZone : na, "Oversold Zone", color.new(bullishColor, 60), 1, plot.style_circles)
+plot(0, "Lower Bound", color.new(bullishColor, 70), 1)
+
+color lineColor =
+     osc >= upperZone ? bearishColor :
+     osc <= lowerZone ? bullishColor :
+     osc > 50 ? color.new(bearishColor, 20) :
+     osc < 50 ? color.new(bullishColor, 20) :
+     color.new(color.gray, 10)
+
+plot(osc, "PE-RP v3.0", lineColor, 3)
+
+// ══════════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(alertPremiumSignals and longSignal and longConfidence == 3, "🔥 PREMIUM Long", "🔥 PREMIUM LONG\nPE-RP v3.0")
+alertcondition(alertPremiumSignals and shortSignal and shortConfidence == 3, "🔥 PREMIUM Short", "🔥 PREMIUM SHORT\nPE-RP v3.0")
+
+alertcondition(alertHighSignals and longSignal and longConfidence == 2, "⚡ HIGH Long", "⚡ HIGH QUALITY LONG\nPE-RP v3.0")
+alertcondition(alertHighSignals and shortSignal and shortConfidence == 2, "⚡ HIGH Short", "⚡ HIGH QUALITY SHORT\nPE-RP v3.0")
+
+alertcondition(alertStandardSignals and longSignal and longConfidence <= 1, "✓ Standard Long", "✓ STANDARD LONG\nPE-RP v3.0")
+alertcondition(alertStandardSignals and shortSignal and shortConfidence <= 1, "✓ Standard Short", "✓ STANDARD SHORT\nPE-RP v3.0")
+
+bool enteringOverbought = ta.cross(osc, upperZone) and osc > upperZone
+bool enteringOversold = ta.cross(osc, lowerZone) and osc < lowerZone
+bool extremeOverbought = osc >= 85
+bool extremeOversold = osc <= 15
+
+alertcondition(alertZoneWarnings and enteringOversold, "📍 Oversold Zone", "📍 OVERSOLD\nPE-RP v3.0")
+alertcondition(alertZoneWarnings and enteringOverbought, "📍 Overbought Zone", "📍 OVERBOUGHT\nPE-RP v3.0")
+alertcondition(alertZoneWarnings and extremeOversold, "🔴 EXTREME Oversold", "🔴 EXTREME OVERSOLD\nPE-RP v3.0")
+alertcondition(alertZoneWarnings and extremeOverbought, "🔴 EXTREME Overbought", "🔴 EXTREME OVERBOUGHT\nPE-RP v3.0")
+
+alertcondition(showDivergences and bullishDivergence, "🔄 Bullish Divergence", "🔄 BULLISH DIVERGENCE\nPE-RP v3.0")
+alertcondition(showDivergences and bearishDivergence, "🔄 Bearish Divergence", "🔄 BEARISH DIVERGENCE\nPE-RP v3.0")
