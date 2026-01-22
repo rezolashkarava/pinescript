@@ -118,8 +118,28 @@ confirmationMode = input.string("Sweep Closeback", "Spike Confirmation",
 sweepLookbackInput = input.int(20, "Sweep Lookback (Base: 15m)", minval=10, maxval=200, group=groupFilters,
      tooltip="Base: 20 bars on 15m (~5 hours). Auto-mode scales this")
 
-requireFollowThrough = input.bool(true, "Require Follow-Through Bar", group=groupFilters,
-     tooltip="If Spike Confirmation is enabled, require the next bar to break the reversal bar's high (LONG) / low (SHORT)")
+entryModel = input.string("BOS + Retest (Strict)", "Entry Model",
+     options=["Setup (Aggressive)", "BOS (Close Confirm)", "BOS + Retest (Strict)"],
+     group=groupFilters,
+     tooltip="Setup: signals immediately (many false positives)\nBOS: require close through setup candle extreme\nBOS+Retest: require break then retest+rejection (fewest, highest precision)")
+
+retestTolAtrInput = input.float(0.25, "Retest Tolerance (x ATR)", minval=0.05, maxval=2.0, step=0.05, group=groupFilters,
+     tooltip="Used in BOS+Retest to consider the level retested")
+
+maxWaitBarsInput = input.int(20, "Max Wait Bars (Base: 15m)", minval=1, maxval=500, group=groupFilters,
+     tooltip="How long an exhaustion setup stays valid for waiting confirmation")
+
+requireNoNewExtreme = input.bool(true, "Strict: No New Extreme", group=groupFilters,
+     tooltip="In BOS/BOS+Retest, require confirmation candle does not make a new extreme beyond the setup candle")
+
+useRegimeFilter = input.bool(true, "Use 1h Regime Filter", group=groupFilters,
+     tooltip="Suppresses countertrend entries during strong 1h trends")
+regimeTf = input.timeframe("60", "Regime Timeframe", group=groupFilters)
+regimeEmaLen = input.int(200, "Regime EMA Length", minval=20, maxval=500, group=groupFilters)
+regimeSlopeLookback = input.int(20, "Regime Slope Lookback", minval=5, maxval=200, group=groupFilters)
+regimeAtrLen = input.int(14, "Regime ATR Length", minval=5, maxval=100, group=groupFilters)
+maxRegimeSlopeAtr = input.float(1.0, "Max 1h EMA Slope (ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupFilters,
+     tooltip="Higher = allow more countertrend fades")
 
 requireBothCore = input.bool(true, "Require BOTH Velocity + Reversal Candle", group=groupFilters,
      tooltip="Recommended: ON for quality signals")
@@ -133,6 +153,10 @@ float minPriceMove = autoAdaptive ? minPriceMoveInput * thresholdMultiplier : mi
 int priceExtremeLookback = autoAdaptive ? int(math.max(20, math.round(priceExtremeLookbackInput * tfMultiplier))) : priceExtremeLookbackInput
 int sweepLookback = autoAdaptive ? int(math.max(10, math.round(sweepLookbackInput * tfMultiplier))) : sweepLookbackInput
 
+float retestTolAtr = autoAdaptive ? retestTolAtrInput / thresholdMultiplier : retestTolAtrInput
+float waitMultiplier = (tfMinutes > 0 ? 15.0 / tfMinutes : 1.0)
+int maxWaitBars = autoAdaptive ? int(math.min(500, math.max(1, math.round(maxWaitBarsInput * waitMultiplier)))) : maxWaitBarsInput
+
 useVolatilityFilter = input.bool(true, "Require Active Market (Volatility Filter)", group=groupFilters,
      tooltip="Blocks signals during low-volatility ranging markets")
 
@@ -141,6 +165,8 @@ signalStyle = input.string("Labels with Confidence", "Signal Style",
      options=["Triangles Only", "Labels with Confidence", "Both"], 
      group=groupVis)
 // labelSize = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal"], group=groupVis)  // Disabled - Pine Script requires constant size
+showSetupMarkers = input.bool(true, "Show Setup Markers", group=groupVis,
+     tooltip="Shows where the spike exhaustion setup is detected. Entry signals can come later depending on Entry Model.")
 showConfidenceColors = input.bool(true, "Use Confidence Colors", group=groupVis,
      tooltip="L3/S3=Bright, L2/S2=Medium, L1/S1=Dim")
 debugMode = input.bool(false, "Debug Mode", group=groupVis)
@@ -270,7 +296,11 @@ bool sweepLong = not na(sweepLow) and low < sweepLow and close > sweepLow
 bool spikeConfirmLongOk = confirmationMode == "Off" or sweepLong
 bool spikeConfirmShortOk = confirmationMode == "Off" or sweepShort
 
-bool useFollowThrough = confirmationMode == "Sweep Closeback" and requireFollowThrough
+[regimeEma, regimeEmaPrev, regimeAtr] = request.security(syminfo.tickerid, regimeTf,
+     [ta.ema(close, regimeEmaLen), ta.ema(close, regimeEmaLen)[regimeSlopeLookback], ta.atr(regimeAtrLen)],
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+float regimeSlopeAtr = (not na(regimeAtr) and regimeAtr != 0.0) ? math.abs(regimeEma - regimeEmaPrev) / regimeAtr : na
+bool regimeOk = not useRegimeFilter or na(regimeSlopeAtr) or regimeSlopeAtr <= maxRegimeSlopeAtr
 
 // Volatility filter - check if we're in an active market
 float atrSma = ta.sma(atr, 50)
@@ -341,60 +371,87 @@ bool shortCoreOk = not requireBothCore or (shortHasVelocity and shortHasCandle)
 bool longSetupRaw = longScore >= minScoreRequired and longCoreOk and volatilityOk and longConfidence > 0 and spikeConfirmLongOk
 bool shortSetupRaw = shortScore >= minScoreRequired and shortCoreOk and volatilityOk and shortConfidence > 0 and spikeConfirmShortOk
 
-var int pendingLongBar = na
-var float pendingLongBreak = na
-var int pendingLongScore = na
-var int pendingLongConfidence = na
+bool longSetupMarker = longSetupRaw and barstate.isconfirmed
+bool shortSetupMarker = shortSetupRaw and barstate.isconfirmed
 
-var int pendingShortBar = na
-var float pendingShortBreak = na
-var int pendingShortScore = na
-var int pendingShortConfidence = na
+var int setupLongBar = na
+var float setupLongHigh = na
+var float setupLongLow = na
+var int setupLongScore = na
+var int setupLongConfidence = na
+var bool setupLongBos = false
 
-bool longFollowTrigger = useFollowThrough and not na(pendingLongBar) and bar_index == pendingLongBar + 1 and high > pendingLongBreak
-bool shortFollowTrigger = useFollowThrough and not na(pendingShortBar) and bar_index == pendingShortBar + 1 and low < pendingShortBreak
+var int setupShortBar = na
+var float setupShortHigh = na
+var float setupShortLow = na
+var int setupShortScore = na
+var int setupShortConfidence = na
+var bool setupShortBos = false
 
-bool longSignalRaw = useFollowThrough ? longFollowTrigger : longSetupRaw
-bool shortSignalRaw = useFollowThrough ? shortFollowTrigger : shortSetupRaw
+if not na(setupLongBar) and (bar_index - setupLongBar) > maxWaitBars
+    setupLongBar := na
+    setupLongHigh := na
+    setupLongLow := na
+    setupLongScore := na
+    setupLongConfidence := na
+    setupLongBos := false
 
-int longScoreUsed = longFollowTrigger ? pendingLongScore : longScore
-int shortScoreUsed = shortFollowTrigger ? pendingShortScore : shortScore
-int longConfidenceUsed = longFollowTrigger ? pendingLongConfidence : longConfidence
-int shortConfidenceUsed = shortFollowTrigger ? pendingShortConfidence : shortConfidence
+if not na(setupShortBar) and (bar_index - setupShortBar) > maxWaitBars
+    setupShortBar := na
+    setupShortHigh := na
+    setupShortLow := na
+    setupShortScore := na
+    setupShortConfidence := na
+    setupShortBos := false
 
-if useFollowThrough
-    if longFollowTrigger
-        pendingLongBar := na
-        pendingLongBreak := na
-        pendingLongScore := na
-        pendingLongConfidence := na
-    if shortFollowTrigger
-        pendingShortBar := na
-        pendingShortBreak := na
-        pendingShortScore := na
-        pendingShortConfidence := na
+if longSetupMarker
+    setupLongBar := bar_index
+    setupLongHigh := high
+    setupLongLow := low
+    setupLongScore := longScore
+    setupLongConfidence := longConfidence
+    setupLongBos := false
 
-    if not na(pendingLongBar) and bar_index > pendingLongBar + 1
-        pendingLongBar := na
-        pendingLongBreak := na
-        pendingLongScore := na
-        pendingLongConfidence := na
-    if not na(pendingShortBar) and bar_index > pendingShortBar + 1
-        pendingShortBar := na
-        pendingShortBreak := na
-        pendingShortScore := na
-        pendingShortConfidence := na
+if shortSetupMarker
+    setupShortBar := bar_index
+    setupShortHigh := high
+    setupShortLow := low
+    setupShortScore := shortScore
+    setupShortConfidence := shortConfidence
+    setupShortBos := false
 
-    if longSetupRaw
-        pendingLongBar := bar_index
-        pendingLongBreak := high
-        pendingLongScore := longScore
-        pendingLongConfidence := longConfidence
-    if shortSetupRaw
-        pendingShortBar := bar_index
-        pendingShortBreak := low
-        pendingShortScore := shortScore
-        pendingShortConfidence := shortConfidence
+bool longSignalRaw = false
+bool shortSignalRaw = false
+
+if entryModel == "Setup (Aggressive)"
+    longSignalRaw := longSetupMarker and regimeOk
+    shortSignalRaw := shortSetupMarker and regimeOk
+else
+    bool longSetupActive = not na(setupLongBar)
+    bool shortSetupActive = not na(setupShortBar)
+
+    bool longBos = longSetupActive and barstate.isconfirmed and close > setupLongHigh and (not requireNoNewExtreme or low >= setupLongLow)
+    bool shortBos = shortSetupActive and barstate.isconfirmed and close < setupShortLow and (not requireNoNewExtreme or high <= setupShortHigh)
+
+    if longBos
+        setupLongBos := true
+    if shortBos
+        setupShortBos := true
+
+    if entryModel == "BOS (Close Confirm)"
+        longSignalRaw := longBos and regimeOk
+        shortSignalRaw := shortBos and regimeOk
+    else
+        bool longRetest = setupLongBos and barstate.isconfirmed and low <= setupLongHigh + (retestTolAtr * atr) and close > setupLongHigh and close > open and (not requireNoNewExtreme or low >= setupLongLow)
+        bool shortRetest = setupShortBos and barstate.isconfirmed and high >= setupShortLow - (retestTolAtr * atr) and close < setupShortLow and close < open and (not requireNoNewExtreme or high <= setupShortHigh)
+
+        longSignalRaw := longRetest and regimeOk
+        shortSignalRaw := shortRetest and regimeOk
+
+int longScoreUsed = longSignalRaw and entryModel != "Setup (Aggressive)" ? setupLongScore : longScore
+int shortScoreUsed = shortSignalRaw and entryModel != "Setup (Aggressive)" ? setupShortScore : shortScore
+int longConfidenceUsed = longSignalRaw and entryModel != "Setup (Aggressive)" ? setupLongConfidence : longConfidence
+int shortConfidenceUsed = shortSignalRaw and entryModel != "Setup (Aggressive)" ? setupShortConfidence : shortConfidence
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 7. FILTERS
@@ -408,6 +465,22 @@ bool shortSignal = shortSignalRaw and cooldownOk and shortScoreUsed > longScoreU
 
 if longSignal or shortSignal
     lastSignalBar := bar_index
+
+if longSignal
+    setupLongBar := na
+    setupLongHigh := na
+    setupLongLow := na
+    setupLongScore := na
+    setupLongConfidence := na
+    setupLongBos := false
+
+if shortSignal
+    setupShortBar := na
+    setupShortHigh := na
+    setupShortLow := na
+    setupShortScore := na
+    setupShortConfidence := na
+    setupShortBos := false
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VISUAL SIGNALS WITH CONFIDENCE LEVELS
@@ -426,6 +499,11 @@ color shortColorBase = #CC0000
 color shortColorS3 = shortColorBase
 color shortColorS2 = showConfidenceColors ? #AA0000 : shortColorBase
 color shortColorS1 = showConfidenceColors ? #880000 : shortColorBase
+
+plotshape(showSetupMarkers and longSetupMarker, title="LONG Setup", style=shape.circle, location=location.belowbar,
+     color=color.new(longColorBase, 75), size=size.tiny)
+plotshape(showSetupMarkers and shortSetupMarker, title="SHORT Setup", style=shape.circle, location=location.abovebar,
+     color=color.new(shortColorBase, 75), size=size.tiny)
 
 // Text colors (readable on dark backgrounds)
 color longTextColor = color.new(#FFFFFF, 0)   // White on dark green
