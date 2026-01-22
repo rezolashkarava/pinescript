@@ -1,5 +1,5 @@
 //@version=6
-indicator("Parabolic Exhaustion V2 [15m Confidence]", overlay=true, max_labels_count=100)
+indicator("Parabolic Exhaustion V2 [Multi-Timeframe]", overlay=true, max_labels_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE CONCEPT: Catch parabolic tops/bottoms with CONFIDENCE LEVELS
@@ -13,8 +13,41 @@ indicator("Parabolic Exhaustion V2 [15m Confidence]", overlay=true, max_labels_c
 // L2/S2 = Medium confidence (4 points) - Good setups
 // L1/S1 = Lower confidence (3 points) - Aggressive only
 //
-// OPTIMIZED FOR: 15-minute timeframe crypto trading
+// MULTI-TIMEFRAME ADAPTIVE: Automatically adjusts to any chart timeframe
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIMEFRAME DETECTION & SMART SCALING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Convert current timeframe to minutes
+int tfMinutes = timeframe.in_seconds() / 60
+
+// Smart scaling based on timeframe characteristics (not linear)
+// Lower TFs need tighter parameters due to noise
+// Higher TFs need longer lookbacks but similar sensitivity
+float tfMultiplier = 
+     tfMinutes <= 1 ? 0.2 :      // 1m: Very tight, reduce noise
+     tfMinutes <= 3 ? 0.4 :      // 3m: Tighter than baseline
+     tfMinutes <= 5 ? 0.6 :      // 5m: Moderately tight
+     tfMinutes <= 15 ? 1.0 :     // 15m: Baseline (optimal)
+     tfMinutes <= 30 ? 1.5 :     // 30m: Slightly longer
+     tfMinutes <= 60 ? 2.5 :     // 1h: Longer periods
+     tfMinutes <= 240 ? 6.0 :    // 4h: Much longer
+     tfMinutes <= 1440 ? 20.0 :  // Daily: Very long
+     40.0                         // Weekly+: Extra long
+
+// Threshold adjustments for different timeframes
+float thresholdMultiplier = 
+     tfMinutes <= 1 ? 1.3 :      // 1m: Need higher thresholds (more strict)
+     tfMinutes <= 5 ? 1.15 :     // 5m: Slightly higher
+     tfMinutes <= 15 ? 1.0 :     // 15m: Baseline
+     tfMinutes <= 60 ? 0.95 :    // 1h: Slightly lower
+     0.9                          // 4h+: Lower thresholds (less strict)
+
+groupTF = "⚙️ Timeframe Mode"
+autoAdaptive = input.bool(true, "Auto-Adaptive Mode", group=groupTF,
+     tooltip="ON = Automatically adjusts all parameters for current timeframe\nOFF = Use manual settings below")
 
 groupSettings = "Signal Settings"
 minConfidenceLevel = input.string("L2/S2 (Medium)", "Minimum Confidence Level", 
@@ -23,41 +56,71 @@ minConfidenceLevel = input.string("L2/S2 (Medium)", "Minimum Confidence Level",
      tooltip="L3/S3 = 5+ points (best quality)\nL2/S2 = 4 points (balanced)\nL1/S1 = 3 points (aggressive)")
 
 groupVelocity = "Velocity Detection"
-velocityPeriod = input.int(5, "Velocity Period", minval=2, maxval=15, group=groupVelocity,
-     tooltip="15m optimized: 5-6 bars for parabolic detection")
-velocityThreshold = input.float(2.0, "Velocity Threshold (x ATR)", minval=1.0, maxval=10.0, step=0.1, group=groupVelocity,
-     tooltip="15m optimized: 1.8-2.2 sweet spot")
-atrPeriod = input.int(14, "ATR Period", minval=5, maxval=50, group=groupVelocity)
+velocityPeriodInput = input.int(5, "Velocity Period (Base: 15m)", minval=2, maxval=50, group=groupVelocity,
+     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
+velocityThresholdInput = input.float(2.0, "Velocity Threshold (x ATR)", minval=1.0, maxval=10.0, step=0.1, group=groupVelocity,
+     tooltip="Base: 1.8-2.2 for 15m timeframe")
+atrPeriodInput = input.int(14, "ATR Period (Base: 15m)", minval=5, maxval=100, group=groupVelocity,
+     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
+
+// Auto-adjusted values with smart scaling
+int velocityPeriod = autoAdaptive ? int(math.max(2, math.round(velocityPeriodInput * tfMultiplier))) : velocityPeriodInput
+float velocityThreshold = autoAdaptive ? velocityThresholdInput * thresholdMultiplier : velocityThresholdInput
+int atrPeriod = autoAdaptive ? int(math.max(5, math.round(atrPeriodInput * tfMultiplier))) : atrPeriodInput
 
 groupCandle = "Reversal Candle Detection"
-minWickRatio = input.float(0.45, "Min Wick Ratio", minval=0.2, maxval=2.0, step=0.05, group=groupCandle,
-     tooltip="15m: larger candles need good wicks")
-minCandleSize = input.float(0.7, "Min Candle Size (x ATR)", minval=0.3, maxval=5.0, step=0.1, group=groupCandle,
-     tooltip="15m: reversal candles are typically larger")
+minWickRatioInput = input.float(0.45, "Min Wick Ratio", minval=0.2, maxval=2.0, step=0.05, group=groupCandle,
+     tooltip="Base: 0.45 for larger candles with good wicks")
+minCandleSizeInput = input.float(0.7, "Min Candle Size (x ATR)", minval=0.3, maxval=5.0, step=0.1, group=groupCandle,
+     tooltip="Base: 0.7 - reversal candles are typically larger")
+
+// Auto-adjusted values - lower TFs need stricter candle requirements
+float minWickRatio = autoAdaptive ? minWickRatioInput * thresholdMultiplier : minWickRatioInput
+float minCandleSize = autoAdaptive ? minCandleSizeInput * thresholdMultiplier : minCandleSizeInput
 
 groupMomentum = "Momentum Exhaustion"
-rocPeriod = input.int(8, "ROC Period", minval=3, maxval=20, group=groupMomentum)
-rocExtreme = input.float(80.0, "ROC Extreme Percentile", minval=70.0, maxval=99.0, step=1.0, group=groupMomentum)
-rocLookback = input.int(120, "ROC Lookback", minval=50, maxval=500, group=groupMomentum)
+rocPeriodInput = input.int(8, "ROC Period (Base: 15m)", minval=3, maxval=50, group=groupMomentum,
+     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
+rocExtremeInput = input.float(80.0, "ROC Extreme Percentile", minval=70.0, maxval=99.0, step=1.0, group=groupMomentum,
+     tooltip="Lower TFs auto-adjust to be more strict")
+rocLookbackInput = input.int(120, "ROC Lookback (Base: 15m)", minval=50, maxval=1000, group=groupMomentum,
+     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
+
+// Auto-adjusted values
+int rocPeriod = autoAdaptive ? int(math.max(3, math.round(rocPeriodInput * tfMultiplier))) : rocPeriodInput
+int rocLookback = autoAdaptive ? int(math.max(50, math.round(rocLookbackInput * tfMultiplier))) : rocLookbackInput
+// Lower timeframes need stricter ROC extremes (higher percentile)
+float rocExtreme = autoAdaptive ? math.min(95.0, rocExtremeInput + (tfMinutes < 15 ? (15 - tfMinutes) * 0.5 : 0)) : rocExtremeInput
 
 requireRocExtreme = input.bool(false, "Require ROC Extreme", group=groupMomentum,
      tooltip="OFF = more signals, ROC just adds bonus points")
 
 groupVolume = "Volume Climax"
-volMultiplier = input.float(1.4, "Volume Spike (x Average)", minval=1.1, maxval=5.0, step=0.1, group=groupVolume)
-volPeriod = input.int(20, "Volume Average Period", minval=10, maxval=100, group=groupVolume)
+volMultiplierInput = input.float(1.4, "Volume Spike (x Average)", minval=1.1, maxval=5.0, step=0.1, group=groupVolume,
+     tooltip="Lower TFs need higher volume spikes to be significant")
+volPeriodInput = input.int(20, "Volume Average Period (Base: 15m)", minval=10, maxval=200, group=groupVolume,
+     tooltip="Base setting for 15m. Auto-mode scales this for other timeframes")
+
+// Auto-adjusted values - lower TFs need higher volume requirements
+float volMultiplier = autoAdaptive ? volMultiplierInput * thresholdMultiplier : volMultiplierInput
+int volPeriod = autoAdaptive ? int(math.max(10, math.round(volPeriodInput * tfMultiplier))) : volPeriodInput
 
 groupFilters = "Filters"
-cooldownBars = input.int(8, "Signal Cooldown (bars)", minval=0, maxval=50, group=groupFilters,
-     tooltip="15m: 6-10 bars prevents clusters")
-minPriceMove = input.float(2.2, "Min Price Move (x ATR)", minval=0.5, maxval=10.0, step=0.2, group=groupFilters,
-     tooltip="15m: needs meaningful move before reversal")
+cooldownBarsInput = input.int(8, "Signal Cooldown (bars, Base: 15m)", minval=0, maxval=100, group=groupFilters,
+     tooltip="Base: 6-10 bars for 15m. Auto-mode scales to prevent signal clusters")
+minPriceMoveInput = input.float(2.2, "Min Price Move (x ATR)", minval=0.5, maxval=10.0, step=0.2, group=groupFilters,
+     tooltip="Base: 2.2 - needs meaningful move before reversal")
 
 requireBothCore = input.bool(true, "Require BOTH Velocity + Reversal Candle", group=groupFilters,
      tooltip="Recommended: ON for quality signals")
 
-priceExtremeLookback = input.int(40, "Price Extreme Lookback", minval=20, maxval=200, group=groupFilters,
-     tooltip="15m: 40 bars = ~10 hours lookback")
+priceExtremeLookbackInput = input.int(40, "Price Extreme Lookback (Base: 15m)", minval=20, maxval=500, group=groupFilters,
+     tooltip="Base: 40 bars for 15m (~10 hours). Auto-mode scales proportionally")
+
+// Auto-adjusted values
+int cooldownBars = autoAdaptive ? int(math.max(0, math.round(cooldownBarsInput * tfMultiplier))) : cooldownBarsInput
+float minPriceMove = autoAdaptive ? minPriceMoveInput * thresholdMultiplier : minPriceMoveInput
+int priceExtremeLookback = autoAdaptive ? int(math.max(20, math.round(priceExtremeLookbackInput * tfMultiplier))) : priceExtremeLookbackInput
 
 useVolatilityFilter = input.bool(true, "Require Active Market (Volatility Filter)", group=groupFilters,
      tooltip="Blocks signals during low-volatility ranging markets")
@@ -72,7 +135,7 @@ showConfidenceColors = input.bool(true, "Use Confidence Colors", group=groupVis,
 debugMode = input.bool(false, "Debug Mode", group=groupVis)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 15M TIMEFRAME OPTIMIZATIONS
+// ACTIVE PARAMETER VALUES (Auto-Adjusted or Manual)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 float velThreshold = velocityThreshold
@@ -80,6 +143,31 @@ float wickRatio = minWickRatio
 float candleSize = minCandleSize
 float volMult = volMultiplier
 float rocExtremeAdj = rocExtreme
+float minPriceMoveActive = minPriceMove
+
+// Display info table if auto mode is on
+var table infoTable = table.new(position.bottom_right, 2, 10, border_width=1)
+if barstate.islast and autoAdaptive
+    table.cell(infoTable, 0, 0, "🔄 AUTO", text_color=color.white, bgcolor=color.blue, text_size=size.tiny)
+    table.cell(infoTable, 1, 0, "MODE", text_color=color.white, bgcolor=color.blue, text_size=size.tiny)
+    table.cell(infoTable, 0, 1, "TF:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, str.tostring(tfMinutes) + "m", text_color=color.yellow, text_size=size.tiny)
+    table.cell(infoTable, 0, 2, "Period:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, str.tostring(tfMultiplier, "#.##") + "x", text_color=color.yellow, text_size=size.tiny)
+    table.cell(infoTable, 0, 3, "Strict:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, str.tostring(thresholdMultiplier, "#.##") + "x", text_color=color.orange, text_size=size.tiny)
+    table.cell(infoTable, 0, 4, "Vel:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, str.tostring(velocityPeriod), text_color=color.lime, text_size=size.tiny)
+    table.cell(infoTable, 0, 5, "VelTh:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, str.tostring(velThreshold, "#.##"), text_color=color.lime, text_size=size.tiny)
+    table.cell(infoTable, 0, 6, "ATR:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 6, str.tostring(atrPeriod), text_color=color.lime, text_size=size.tiny)
+    table.cell(infoTable, 0, 7, "Cool:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 7, str.tostring(cooldownBars), text_color=color.lime, text_size=size.tiny)
+    table.cell(infoTable, 0, 8, "MinMv:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 8, str.tostring(minPriceMoveActive, "#.##"), text_color=color.lime, text_size=size.tiny)
+    table.cell(infoTable, 0, 9, "VolMx:", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 9, str.tostring(volMult, "#.##"), text_color=color.lime, text_size=size.tiny)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. PRICE VELOCITY (Parabolic Acceleration Detection)
