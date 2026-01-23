@@ -1,9 +1,16 @@
 //@version=6
-indicator("ICT Order Block Pro [Paganie] v3.4.1", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("ICT Order Block Pro [Paganie] v3.5.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
-// ICT ORDER BLOCK PRO V3.4.1 - INSTITUTIONAL SMART MONEY CONCEPTS
+// ICT ORDER BLOCK PRO V3.5.0 - INSTITUTIONAL SMART MONEY CONCEPTS
 // Professional-grade order block detection with ICT/SMC methodology
+//
+// V3.5.0 - Enhanced Volume Classification:
+// • NEW: Buying/Selling Pressure method for Power Row (more accurate than Polarity)
+//   - Uses (close-low)/(high-low) ratio to assign proportional buy/sell volume
+//   - Provides nuanced readings instead of binary all-or-nothing classification
+// • Added powerVolumeMethod setting to choose between Pressure and Polarity
+// • Pressure method is now the default for improved accuracy
 //
 // V3.4.1 - Array Bounds & Edge Case Fixes:
 // • Fixed trimLevels function index out-of-bounds when removing liquidity levels
@@ -279,7 +286,9 @@ powerLtf = input.timeframe("1", "Manual Lower TF", group="📊 Power (Intrabar)"
      tooltip="Only used when Mode is Manual\nRecommended: 1-5 min for most charts")
 powerTieBreak = input.string("Carry last direction", "Doji Handling", 
      options=["Carry last direction", "Use prev intrabar close", "Ignore dojis"], group="📊 Power (Intrabar)", 
-     tooltip="How to classify intrabar candles where close == open\n• Carry last: Use previous candle's direction\n• Prev close: Compare to prior intrabar's close\n• Ignore: Skip doji candles entirely")
+     tooltip="How to classify intrabar candles where close == open (only applies to Polarity method)\n• Carry last: Use previous candle's direction\n• Prev close: Compare to prior intrabar's close\n• Ignore: Skip doji candles entirely")
+powerVolumeMethod = input.string("Pressure", "Volume Method", options=["Pressure", "Polarity"], group="📊 Power (Intrabar)",
+     tooltip="PRESSURE: Uses (close-low)/(high-low) to assign proportional buy/sell volume within each candle's range. More accurate and nuanced.\nPOLARITY: Classic method - all volume goes to buy if close>open, sell if close<open. Binary classification.")
 
 // Stability Controls
 powerNeutralBandPct = input.float(10.0, "Neutral Band %", minval=0.0, maxval=30.0, step=1.0, group="📊 Power (Intrabar)", 
@@ -486,55 +495,85 @@ int powerTfSec = timeframe.in_seconds(effectivePowerLtf)
 string powerLtfSafe = powerTfSec <= chartTfSec ? effectivePowerLtf : timeframe.period
 
 arrOpen = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, open, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+arrHigh = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, high, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+arrLow = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, low, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
 arrClose = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, close, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
 arrVol = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, volume, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
 
 // Calculate Power metrics from intrabar data
-calcPower(string tieBreakRule) =>
+// Supports both Polarity (binary) and Pressure (proportional) methods
+calcPower(string method, string tieBreakRule) =>
     float buyVol = 0.0
     float sellVol = 0.0
     // Validate all arrays have same size (edge case: symbol/timeframe errors)
     int sizeVol = array.size(arrVol)
     int sizeOpen = array.size(arrOpen)
+    int sizeHigh = array.size(arrHigh)
+    int sizeLow = array.size(arrLow)
     int sizeClose = array.size(arrClose)
-    int intrabarCount = math.min(sizeVol, math.min(sizeOpen, sizeClose))
+    int intrabarCount = math.min(sizeVol, math.min(sizeOpen, math.min(sizeHigh, math.min(sizeLow, sizeClose))))
     int lastDir = 0  // 1 = bullish, -1 = bearish, 0 = unknown
     
     if intrabarCount > 0
         float prevClose = na
         for i = 0 to intrabarCount - 1
             float o = array.get(arrOpen, i)
+            float h = array.get(arrHigh, i)
+            float l = array.get(arrLow, i)
             float c = array.get(arrClose, i)
             float v = array.get(arrVol, i)
             
-            int dir = 0
-            if c > o
-                dir := 1   // Bullish intrabar
-            else if c < o
-                dir := -1  // Bearish intrabar
+            if method == "Pressure"
+                // === BUYING/SELLING PRESSURE METHOD ===
+                // Proportionally assigns volume based on where price closed within the range
+                // (close - low) = buying pressure, (high - close) = selling pressure
+                float candleRange = h - l
+                if candleRange > 0
+                    float buyRatio = (c - l) / candleRange
+                    float sellRatio = (h - c) / candleRange
+                    buyVol += v * buyRatio
+                    sellVol += v * sellRatio
+                else
+                    // No range (h == l), use direction from open to close
+                    if c > o
+                        buyVol += v
+                    else if c < o
+                        sellVol += v
+                    else
+                        // True doji - split evenly
+                        buyVol += v * 0.5
+                        sellVol += v * 0.5
             else
-                // Doji (close == open) - apply tie-break rule (uses effective setting)
-                if tieBreakRule == "Carry last direction"
-                    dir := lastDir
-                else if tieBreakRule == "Use prev intrabar close"
-                    if not na(prevClose)
-                        dir := c > prevClose ? 1 : (c < prevClose ? -1 : 0)
-                // else "Ignore dojis" - dir stays 0, volume not counted
-            
-            // Accumulate volume by direction
-            if dir == 1
-                buyVol += v
-            else if dir == -1
-                sellVol += v
-            
-            // Update state for next iteration
-            if dir != 0
-                lastDir := dir
-            prevClose := c
+                // === POLARITY METHOD ===
+                // Binary classification: all volume goes to buy or sell
+                int dir = 0
+                if c > o
+                    dir := 1   // Bullish intrabar
+                else if c < o
+                    dir := -1  // Bearish intrabar
+                else
+                    // Doji (close == open) - apply tie-break rule (uses effective setting)
+                    if tieBreakRule == "Carry last direction"
+                        dir := lastDir
+                    else if tieBreakRule == "Use prev intrabar close"
+                        if not na(prevClose)
+                            dir := c > prevClose ? 1 : (c < prevClose ? -1 : 0)
+                    // else "Ignore dojis" - dir stays 0, volume not counted
+                
+                // Accumulate volume by direction
+                if dir == 1
+                    buyVol += v
+                else if dir == -1
+                    sellVol += v
+                
+                // Update state for next iteration
+                if dir != 0
+                    lastDir := dir
+                prevClose := c
     
     [buyVol, sellVol, intrabarCount]
 
-[rawBuyVol, rawSellVol, intrabarCount] = calcPower(effectivePowerTieBreak)
+[rawBuyVol, rawSellVol, intrabarCount] = calcPower(powerVolumeMethod, effectivePowerTieBreak)
 
 // Compute delta and percentage
 float rawDelta = rawBuyVol - rawSellVol
