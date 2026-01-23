@@ -1,5 +1,5 @@
 //@version=6
-indicator("Parabolic Exhaustion [Paganie] v3.1", overlay=true, max_labels_count=100)
+indicator("Parabolic Exhaustion [Paganie] v3.3", overlay=true, max_labels_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE CONCEPT: Catch parabolic tops/bottoms with CONFIDENCE LEVELS
@@ -23,181 +23,293 @@ indicator("Parabolic Exhaustion [Paganie] v3.1", overlay=true, max_labels_count=
 // Convert current timeframe to minutes
 int tfMinutes = timeframe.in_seconds() / 60
 
+// Timeframe category for logic branching
+string tfCategory = 
+     tfMinutes <= 1 ? "scalp" :       // 1m
+     tfMinutes <= 5 ? "micro" :       // 2-5m
+     tfMinutes <= 15 ? "intraday" :   // 6-15m
+     tfMinutes <= 60 ? "swing" :      // 16m-1h
+     tfMinutes <= 240 ? "position" :  // 2h-4h
+     tfMinutes <= 1440 ? "daily" :    // 6h-1D
+     "macro"                           // Weekly+
+
 // Smart scaling based on timeframe characteristics (not linear)
 // Lower TFs need tighter parameters due to noise
 // Higher TFs need longer lookbacks but similar sensitivity
 float tfMultiplier = 
-     tfMinutes <= 1 ? 0.2 :      // 1m: Very tight, reduce noise
-     tfMinutes <= 3 ? 0.4 :      // 3m: Tighter than baseline
-     tfMinutes <= 5 ? 0.6 :      // 5m: Moderately tight
-     tfMinutes <= 15 ? 1.0 :     // 15m: Baseline (optimal)
-     tfMinutes <= 30 ? 1.5 :     // 30m: Slightly longer
-     tfMinutes <= 60 ? 2.5 :     // 1h: Longer periods
-     tfMinutes <= 240 ? 6.0 :    // 4h: Much longer
-     tfMinutes <= 1440 ? 20.0 :  // Daily: Very long
-     40.0                         // Weekly+: Extra long
+     tfMinutes <= 1 ? 0.3 :       // 1m: Very tight, reduce noise
+     tfMinutes <= 2 ? 0.4 :       // 2m: Tight
+     tfMinutes <= 3 ? 0.5 :       // 3m: Tighter than baseline
+     tfMinutes <= 5 ? 0.7 :       // 5m: Moderately tight
+     tfMinutes <= 10 ? 0.85 :     // 10m: Approaching baseline
+     tfMinutes <= 15 ? 1.0 :      // 15m: Baseline (optimal)
+     tfMinutes <= 30 ? 1.3 :      // 30m: Slightly longer
+     tfMinutes <= 60 ? 1.8 :      // 1h: Longer periods
+     tfMinutes <= 120 ? 2.5 :     // 2h: Extended
+     tfMinutes <= 240 ? 4.0 :     // 4h: Much longer
+     tfMinutes <= 480 ? 8.0 :     // 8h: Very long
+     tfMinutes <= 1440 ? 14.0 :   // Daily: Daily scale
+     tfMinutes <= 10080 ? 50.0 :  // Weekly: Weekly scale
+     100.0                         // Monthly+: Extra long
 
-// Threshold adjustments for different timeframes
+// Threshold adjustments - lower TFs need stricter thresholds to filter noise
+// Higher TFs can be more lenient as moves are more meaningful
 float thresholdMultiplier = 
-     tfMinutes <= 1 ? 1.3 :      // 1m: Need higher thresholds (more strict)
-     tfMinutes <= 5 ? 1.15 :     // 5m: Slightly higher
-     tfMinutes <= 15 ? 1.0 :     // 15m: Baseline
-     tfMinutes <= 60 ? 0.95 :    // 1h: Slightly lower
-     0.9                          // 4h+: Lower thresholds (less strict)
+     tfMinutes <= 1 ? 1.4 :       // 1m: Very strict to filter noise
+     tfMinutes <= 3 ? 1.25 :      // 3m: Strict
+     tfMinutes <= 5 ? 1.15 :      // 5m: Moderately strict
+     tfMinutes <= 10 ? 1.05 :     // 10m: Slightly strict
+     tfMinutes <= 15 ? 1.0 :      // 15m: Baseline
+     tfMinutes <= 30 ? 0.95 :     // 30m: Slightly lenient
+     tfMinutes <= 60 ? 0.9 :      // 1h: Lenient
+     tfMinutes <= 240 ? 0.85 :    // 4h: More lenient
+     tfMinutes <= 1440 ? 0.8 :    // Daily: Very lenient
+     0.75                          // Weekly+: Most lenient
+
+// Candle pattern sensitivity - higher TFs have more meaningful candle patterns
+float candleMultiplier = 
+     tfMinutes <= 1 ? 1.5 :       // 1m: Require larger relative candles
+     tfMinutes <= 5 ? 1.3 :       // 5m: Larger candles needed
+     tfMinutes <= 15 ? 1.0 :      // 15m: Baseline
+     tfMinutes <= 60 ? 0.85 :     // 1h: Smaller relative requirement
+     tfMinutes <= 240 ? 0.7 :     // 4h: Even smaller
+     0.6                           // Daily+: Most flexible
+
+// Volume spike sensitivity - lower TFs have more volume noise
+float volumeMultiplier = 
+     tfMinutes <= 1 ? 1.6 :       // 1m: Require much higher volume spikes
+     tfMinutes <= 5 ? 1.4 :       // 5m: Higher spikes needed
+     tfMinutes <= 15 ? 1.0 :      // 15m: Baseline
+     tfMinutes <= 60 ? 0.9 :      // 1h: Lower requirement
+     0.8                           // 4h+: Lowest requirement
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // USER SETTINGS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-groupMain = "📊 Main Settings"
-autoAdaptive = input.bool(true, "Auto-Adaptive (Recommended)", group=groupMain,
-     tooltip="Automatically adjusts all parameters based on your chart timeframe")
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGNAL SETTINGS
+// ─────────────────────────────────────────────────────────────────────────────
+string GROUP_SIGNAL = "⚡ Signal Settings"
 
-minConfidenceLevel = input.string("L2/S2 (Medium)", "Minimum Signal Quality", 
-     options=["L3/S3 (High only)", "L2/S2 (Medium)", "L1/S1 (All signals)"], 
-     group=groupMain,
-     tooltip="L3/S3 = Highest quality, fewer signals\nL2/S2 = Balanced (recommended)\nL1/S1 = More signals, lower quality")
+string minConfidenceLevel = input.string("Medium (L2/S2)", "Signal Quality", 
+     options=["High Only (L3/S3)", "Medium (L2/S2)", "All Signals (L1/S1)"], 
+     group=GROUP_SIGNAL,
+     tooltip="HIGH = Fewest signals, best quality (5+ score)\nMEDIUM = Balanced (4+ score) - Recommended\nALL = Most signals, includes lower quality (3+ score)")
 
-entryModel = input.string("BOS + Retest (Strict)", "Entry Timing",
-     options=["Setup (Aggressive)", "BOS (Close Confirm)", "BOS + Retest (Strict)"],
-     group=groupMain,
-     tooltip="Setup = Immediate signals (fastest, most false signals)\nBOS = Wait for price to break setup level (balanced)\nBOS + Retest = Wait for break and retest (slowest, highest precision)")
+string entryModel = input.string("Immediate", "Entry Mode",
+     options=["Immediate", "Break Confirmed", "Break + Retest"],
+     group=GROUP_SIGNAL,
+     tooltip="IMMEDIATE = Signal on pattern detection (fastest entry)\nBREAK CONFIRMED = Wait for close above/below setup level\nBREAK + RETEST = Wait for break and pullback to level (highest precision)")
 
-groupFilters = "🎯 Filters"
-useRegimeFilter = input.bool(true, "Trend Filter (1H)", group=groupFilters,
-     tooltip="Blocks counter-trend signals during strong 1H trends")
+int cooldownBarsInput = input.int(8, "Cooldown Bars", minval=0, maxval=50, 
+     group=GROUP_SIGNAL,
+     tooltip="Minimum bars between signals to prevent clustering")
 
-useVolatilityFilter = input.bool(true, "Volatility Filter", group=groupFilters,
-     tooltip="Blocks signals during low-volatility ranging markets")
+// ─────────────────────────────────────────────────────────────────────────────
+// FILTERS
+// ─────────────────────────────────────────────────────────────────────────────
+string GROUP_FILTER = "🎯 Filters"
 
-confirmationMode = input.string("Sweep Closeback", "Structure Confirmation",
-     options=["Off", "Sweep Closeback"],
-     group=groupFilters,
-     tooltip="Sweep Closeback = Requires price to sweep a recent high/low and close back inside (recommended)")
+string confirmationMode = input.string("Off", "Sweep Confirmation",
+     options=["Off", "Require Sweep"],
+     group=GROUP_FILTER,
+     tooltip="OFF = Signal on pattern alone\nREQUIRE SWEEP = Price must sweep recent high/low and close back (reduces false signals)")
 
-groupDisplay = "🎨 Display"
-signalStyle = input.string("Labels with Confidence", "Signal Style", 
-     options=["Triangles Only", "Labels with Confidence", "Both"], 
-     group=groupDisplay)
+bool useVolatilityFilter = input.bool(true, "Volatility Filter", group=GROUP_FILTER,
+     tooltip="Blocks signals during low-volatility / ranging markets where reversals are less reliable")
 
-showSetupMarkers = input.bool(true, "Show Setup Markers", group=groupDisplay,
-     tooltip="Shows where exhaustion setup is first detected")
+bool useRegimeFilter = input.bool(false, "Higher TF Trend Filter", group=GROUP_FILTER,
+     tooltip="Blocks counter-trend signals when higher timeframe shows strong trend (uses 1H for <30m charts, 4H for 30m-1H, Daily for 4H)")
 
-showConfidenceColors = input.bool(true, "Color by Confidence", group=groupDisplay,
-     tooltip="Use different colors for L3/L2/L1 signals")
+bool requireBothCore = input.bool(true, "Require Velocity + Candle", group=GROUP_FILTER,
+     tooltip="When ON: Requires BOTH parabolic velocity AND reversal candle pattern\nWhen OFF: Either condition alone can trigger (more signals, lower quality)")
 
-debugMode = input.bool(false, "Debug Mode", group=groupDisplay,
-     tooltip="Shows detailed scoring breakdown")
+// ─────────────────────────────────────────────────────────────────────────────
+// SENSITIVITY
+// ─────────────────────────────────────────────────────────────────────────────
+string GROUP_SENS = "🎚️ Sensitivity"
+
+bool autoAdaptive = input.bool(true, "Auto-Adapt to Timeframe", group=GROUP_SENS,
+     tooltip="Automatically adjusts all detection parameters based on chart timeframe. Recommended ON for most users.")
+
+float velocityThresholdInput = input.float(2.0, "Velocity Threshold", minval=0.5, maxval=5.0, step=0.1,
+     group=GROUP_SENS,
+     tooltip="Minimum price velocity (in ATR units) to detect parabolic move. Higher = stricter, fewer signals. Default: 2.0")
+
+float minPriceMoveInput = input.float(2.2, "Min Price Move (ATR)", minval=0.5, maxval=5.0, step=0.1,
+     group=GROUP_SENS,
+     tooltip="Minimum price range required before reversal signal. Higher = needs bigger moves. Default: 2.2")
+
+float volMultiplierInput = input.float(1.4, "Volume Spike Multiplier", minval=1.0, maxval=3.0, step=0.1,
+     group=GROUP_SENS,
+     tooltip="Volume must be this multiple of average to count as climax. Higher = stricter. Default: 1.4")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DISPLAY
+// ─────────────────────────────────────────────────────────────────────────────
+string GROUP_DISPLAY = "🎨 Display"
+
+string signalStyle = input.string("Labels", "Signal Style", 
+     options=["Labels", "Triangles", "Both"], 
+     group=GROUP_DISPLAY,
+     tooltip="LABELS = Show L1/L2/L3 or S1/S2/S3 text\nTRIANGLES = Simple arrows\nBOTH = Labels and triangles")
+
+bool showConfidenceColors = input.bool(true, "Color by Confidence", group=GROUP_DISPLAY,
+     tooltip="Use different color shades for L3/L2/L1 signal quality levels")
+
+bool showSetupMarkers = input.bool(false, "Show Setup Detection", group=GROUP_DISPLAY,
+     tooltip="Shows small circles where exhaustion pattern is first detected (before confirmation)")
+
+bool debugMode = input.bool(false, "Debug Panel", group=GROUP_DISPLAY,
+     tooltip="Shows detailed scoring breakdown and all detection conditions in a table")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADVANCED (Optional Fine-Tuning)
+// ─────────────────────────────────────────────────────────────────────────────
+string GROUP_ADV = "⚙️ Advanced"
+
+int velocityPeriodInput = input.int(5, "Velocity Lookback", minval=2, maxval=20,
+     group=GROUP_ADV,
+     tooltip="Bars to measure price acceleration. Lower = more reactive, higher = smoother. Default: 5")
+
+int atrPeriodInput = input.int(14, "ATR Period", minval=5, maxval=50,
+     group=GROUP_ADV,
+     tooltip="Period for ATR calculation used in all volatility-based thresholds. Default: 14")
+
+float minWickRatioInput = input.float(1.5, "Min Wick Ratio", minval=0.5, maxval=3.0, step=0.1,
+     group=GROUP_ADV,
+     tooltip="Wick must be this multiple of body size for hammer/shooting star patterns. Default: 1.5")
+
+float minCandleSizeInput = input.float(0.7, "Min Candle Size (ATR)", minval=0.3, maxval=2.0, step=0.1,
+     group=GROUP_ADV,
+     tooltip="Minimum candle range in ATR units for valid reversal pattern. Default: 0.7")
+
+int priceExtremeLookbackInput = input.int(40, "Price Extreme Lookback", minval=10, maxval=200,
+     group=GROUP_ADV,
+     tooltip="Bars to look back for determining if price is at a significant high/low. Default: 40")
+
+int sweepLookbackInput = input.int(20, "Sweep Lookback", minval=5, maxval=100,
+     group=GROUP_ADV,
+     tooltip="Bars to look back for sweep confirmation (when enabled). Default: 20")
+
+int maxWaitBarsInput = input.int(20, "Max Wait for Confirmation", minval=5, maxval=100,
+     group=GROUP_ADV,
+     tooltip="Maximum bars to wait for break/retest confirmation before setup expires. Default: 20")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// INTERNAL PARAMETERS (Auto-optimized)
+// INTERNAL PARAMETERS (Not exposed to UI)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Core detection parameters (optimized defaults)
-velocityPeriodInput = 5
-velocityThresholdInput = 2.0
-atrPeriodInput = 14
-minWickRatioInput = 0.45
-minCandleSizeInput = 0.7
-rocPeriodInput = 8
-rocExtremeInput = 80.0
-rocLookbackInput = 120
-requireRocExtreme = false
-volMultiplierInput = 1.4
-volPeriodInput = 20
-cooldownBarsInput = 8
-minPriceMoveInput = 2.2
-extremeTolAtrInput = 0.6
-sweepLookbackInput = 20
-retestTolAtrInput = 0.25
-maxWaitBarsInput = 20
-requireNoNewExtreme = true
-pivotLeft = 3
-pivotRight = 3
-bosUsePivots = true
-maxBosLevelDistAtrInput = 6.0
-regimeTf = "60"
-regimeEmaLen = 200
-regimeSlopeLookback = 20
-regimeAtrLen = 14
-maxRegimeSlopeAtr = 1.0
-requireBothCore = true
-priceExtremeLookbackInput = 40
+// ROC (Rate of Change) parameters
+int rocPeriodInput = 8
+float rocExtremeInput = 80.0
+int rocLookbackInput = 120
+bool requireRocExtreme = false
+
+// Volume parameters  
+int volPeriodInput = 20
+
+// Tolerance parameters
+float extremeTolAtrInput = 0.6
+float retestTolAtrInput = 0.25
+
+// Structure parameters
+bool requireNoNewExtreme = true
+int pivotLeft = 3
+int pivotRight = 3
+bool bosUsePivots = true
+float maxBosLevelDistAtrInput = 6.0
+
+// Adaptive regime timeframe - always use a higher TF for trend context
+string regimeTf = 
+     tfMinutes <= 5 ? "60" :       // 1-5m charts use 1H for regime
+     tfMinutes <= 15 ? "60" :      // 15m uses 1H
+     tfMinutes <= 30 ? "240" :     // 30m uses 4H
+     tfMinutes <= 60 ? "240" :     // 1H uses 4H
+     tfMinutes <= 240 ? "D" :      // 4H uses Daily
+     tfMinutes <= 1440 ? "W" :     // Daily uses Weekly
+     "M"                            // Weekly+ uses Monthly
+
+// Regime filter parameters
+int regimeEmaLen = 200
+int regimeSlopeLookback = 20
+int regimeAtrLen = 14
+float maxRegimeSlopeAtr = 1.0
 
 // Auto-adjusted values with smart scaling
-int velocityPeriod = autoAdaptive ? int(math.max(2, math.round(velocityPeriodInput * tfMultiplier))) : velocityPeriodInput
+// Velocity period - how many bars to measure price acceleration
+int velocityPeriod = autoAdaptive ? int(math.max(2, math.round(velocityPeriodInput * math.pow(tfMultiplier, 0.7)))) : velocityPeriodInput
+
+// Velocity threshold - lower TFs need higher thresholds to filter noise
 float velocityThreshold = autoAdaptive ? velocityThresholdInput * thresholdMultiplier : velocityThresholdInput
-int atrPeriod = autoAdaptive ? int(math.max(5, math.round(atrPeriodInput * tfMultiplier))) : atrPeriodInput
-float minWickRatio = autoAdaptive ? minWickRatioInput * thresholdMultiplier : minWickRatioInput
-float minCandleSize = autoAdaptive ? minCandleSizeInput * thresholdMultiplier : minCandleSizeInput
-int rocPeriod = autoAdaptive ? int(math.max(3, math.round(rocPeriodInput * tfMultiplier))) : rocPeriodInput
-int rocLookback = autoAdaptive ? int(math.max(50, math.round(rocLookbackInput * tfMultiplier))) : rocLookbackInput
-float rocExtreme = autoAdaptive ? math.min(95.0, rocExtremeInput + (tfMinutes < 15 ? (15 - tfMinutes) * 0.5 : 0)) : rocExtremeInput
-float volMultiplier = autoAdaptive ? volMultiplierInput * thresholdMultiplier : volMultiplierInput
-int volPeriod = autoAdaptive ? int(math.max(10, math.round(volPeriodInput * tfMultiplier))) : volPeriodInput
-int cooldownBars = autoAdaptive ? int(math.max(0, math.round(cooldownBarsInput * tfMultiplier))) : cooldownBarsInput
+
+// ATR period - scales with timeframe but caps reasonably
+int atrPeriod = autoAdaptive ? int(math.max(5, math.min(50, math.round(atrPeriodInput * math.pow(tfMultiplier, 0.6))))) : atrPeriodInput
+
+// Candle pattern requirements - use candle multiplier
+float minWickRatio = autoAdaptive ? minWickRatioInput * candleMultiplier : minWickRatioInput
+float minCandleSize = autoAdaptive ? minCandleSizeInput * candleMultiplier : minCandleSizeInput
+
+// ROC period and lookback - momentum measurement
+int rocPeriod = autoAdaptive ? int(math.max(3, math.min(30, math.round(rocPeriodInput * math.pow(tfMultiplier, 0.6))))) : rocPeriodInput
+int rocLookback = autoAdaptive ? int(math.max(50, math.min(500, math.round(rocLookbackInput * math.pow(tfMultiplier, 0.8))))) : rocLookbackInput
+
+// ROC extreme percentile - stricter on lower TFs
+float rocExtreme = autoAdaptive ? math.min(95.0, math.max(70.0, rocExtremeInput + (tfMinutes < 15 ? (15 - tfMinutes) * 0.8 : (tfMinutes > 60 ? -5 : 0)))) : rocExtremeInput
+
+// Volume requirements - use volume multiplier
+float volMultiplier = autoAdaptive ? volMultiplierInput * volumeMultiplier : volMultiplierInput
+int volPeriod = autoAdaptive ? int(math.max(10, math.min(100, math.round(volPeriodInput * math.pow(tfMultiplier, 0.7))))) : volPeriodInput
+
+// Cooldown between signals - scales with TF
+int cooldownBars = autoAdaptive ? int(math.max(3, math.min(50, math.round(cooldownBarsInput * math.pow(tfMultiplier, 0.5))))) : cooldownBarsInput
+
+// Minimum price move requirement - less strict on higher TFs
 float minPriceMove = autoAdaptive ? minPriceMoveInput * thresholdMultiplier : minPriceMoveInput
-int priceExtremeLookback = autoAdaptive ? int(math.max(20, math.round(priceExtremeLookbackInput * tfMultiplier))) : priceExtremeLookbackInput
-int sweepLookback = autoAdaptive ? int(math.max(10, math.round(sweepLookbackInput * tfMultiplier))) : sweepLookbackInput
+
+// Price extreme lookback - how far back to check for highs/lows
+int priceExtremeLookback = autoAdaptive ? int(math.max(15, math.min(200, math.round(priceExtremeLookbackInput * math.pow(tfMultiplier, 0.75))))) : priceExtremeLookbackInput
+
+// Sweep lookback for structure confirmation
+int sweepLookback = autoAdaptive ? int(math.max(8, math.min(100, math.round(sweepLookbackInput * math.pow(tfMultiplier, 0.7))))) : sweepLookbackInput
+
+// Tolerance levels - inverse relationship with threshold
 float retestTolAtr = autoAdaptive ? retestTolAtrInput / thresholdMultiplier : retestTolAtrInput
 float extremeTolAtr = autoAdaptive ? extremeTolAtrInput / thresholdMultiplier : extremeTolAtrInput
 float maxBosLevelDistAtr = autoAdaptive ? maxBosLevelDistAtrInput / thresholdMultiplier : maxBosLevelDistAtrInput
-float waitMultiplier = (tfMinutes > 0 ? 15.0 / tfMinutes : 1.0)
-int maxWaitBars = autoAdaptive ? int(math.min(500, math.max(1, math.round(maxWaitBarsInput * waitMultiplier)))) : maxWaitBarsInput
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ACTIVE PARAMETER VALUES (Auto-Adjusted or Manual)
-// ═══════════════════════════════════════════════════════════════════════════════
+// Max wait bars - inversely proportional to TF (lower TF = more bars to wait)
+float waitMultiplier = tfMinutes > 0 ? math.max(0.1, 15.0 / tfMinutes) : 1.0
+int maxWaitBars = autoAdaptive ? int(math.min(500, math.max(5, math.round(maxWaitBarsInput * math.pow(waitMultiplier, 0.8))))) : maxWaitBarsInput
 
-float velThreshold = velocityThreshold
-float wickRatio = minWickRatio
-float candleSize = minCandleSize
-float volMult = volMultiplier
-float rocExtremeAdj = rocExtreme
-float minPriceMoveActive = minPriceMove
-
-// Display info table if auto mode is on
-var table infoTable = table.new(position.bottom_right, 2, 10, border_width=1)
-if barstate.islast and autoAdaptive
-    table.cell(infoTable, 0, 0, "🔄 AUTO", text_color=color.white, bgcolor=color.blue, text_size=size.tiny)
-    table.cell(infoTable, 1, 0, "MODE", text_color=color.white, bgcolor=color.blue, text_size=size.tiny)
-    table.cell(infoTable, 0, 1, "TF:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 1, str.tostring(tfMinutes) + "m", text_color=color.yellow, text_size=size.tiny)
-    table.cell(infoTable, 0, 2, "Period:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 2, str.tostring(tfMultiplier, "#.##") + "x", text_color=color.yellow, text_size=size.tiny)
-    table.cell(infoTable, 0, 3, "Strict:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 3, str.tostring(thresholdMultiplier, "#.##") + "x", text_color=color.orange, text_size=size.tiny)
-    table.cell(infoTable, 0, 4, "Vel:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 4, str.tostring(velocityPeriod), text_color=color.lime, text_size=size.tiny)
-    table.cell(infoTable, 0, 5, "VelTh:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 5, str.tostring(velThreshold, "#.##"), text_color=color.lime, text_size=size.tiny)
-    table.cell(infoTable, 0, 6, "ATR:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 6, str.tostring(atrPeriod), text_color=color.lime, text_size=size.tiny)
-    table.cell(infoTable, 0, 7, "Cool:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 7, str.tostring(cooldownBars), text_color=color.lime, text_size=size.tiny)
-    table.cell(infoTable, 0, 8, "MinMv:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 8, str.tostring(minPriceMoveActive, "#.##"), text_color=color.lime, text_size=size.tiny)
-    table.cell(infoTable, 0, 9, "VolMx:", text_color=color.white, text_size=size.tiny)
-    table.cell(infoTable, 1, 9, str.tostring(volMult, "#.##"), text_color=color.lime, text_size=size.tiny)
+// Pivot lookback for swing detection - scales with TF
+int pivotLeftAdj = autoAdaptive ? int(math.max(2, math.min(10, math.round(pivotLeft * math.pow(tfMultiplier, 0.4))))) : pivotLeft
+int pivotRightAdj = autoAdaptive ? int(math.max(2, math.min(10, math.round(pivotRight * math.pow(tfMultiplier, 0.4))))) : pivotRight
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. PRICE VELOCITY (Parabolic Acceleration Detection)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-atr = ta.atr(atrPeriod)
+float atr = ta.atr(atrPeriod)
+bool atrValid = not na(atr) and atr > 0  // Cache ATR validity check
 
 // Calculate price velocity over short period
-priceChange = close - close[velocityPeriod]
-priceVelocity = atr > 0 ? math.abs(priceChange) / atr : 0
+float priceChange = close - close[velocityPeriod]
+float priceVelocity = atrValid ? math.abs(priceChange) / atr : 0
 
 // Detect parabolic upward/downward acceleration
-bool parabolicUp = priceChange > 0 and priceVelocity >= velThreshold
-bool parabolicDown = priceChange < 0 and priceVelocity >= velThreshold
+bool parabolicUp = priceChange > 0 and priceVelocity >= velocityThreshold
+bool parabolicDown = priceChange < 0 and priceVelocity >= velocityThreshold
 
 // Check if we've moved far enough to have a reversal
 int velocityPeriod2 = velocityPeriod * 2
 float priceRange = math.abs(close - close[velocityPeriod2])
-bool sufficientMove = atr > 0 and priceRange >= minPriceMove * atr
+bool sufficientMove = atrValid and priceRange >= minPriceMove * atr
+
+// Pre-calculate ATR-based thresholds (used multiple times)
+float minCandleSizeAtr = minCandleSize * atr
+float extremeTolAtrVal = extremeTolAtr * atr
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 2. REVERSAL CANDLE PATTERNS (Real-time)
@@ -211,17 +323,27 @@ float candleRange = high - low
 bool isBullishCandle = close > open
 bool isBearishCandle = close < open
 
+// Previous candle direction (needed for engulfing validation)
+bool prevWasBullish = close[1] > open[1]
+bool prevWasBearish = close[1] < open[1]
+
 // Bearish reversal patterns (at tops)
-bool shootingStar = isBearishCandle and upperWick >= bodySize * wickRatio and candleRange >= candleSize * atr
-bool bearishEngulfing = isBearishCandle and bodySize >= candleSize * atr and close < open[1] and open > close[1]
-bool longUpperWick = upperWick >= lowerWick * 2 and upperWick >= bodySize and candleRange >= candleSize * atr
+// Shooting star: small body at bottom, long upper wick (wick >= body * ratio)
+bool shootingStar = isBearishCandle and upperWick >= bodySize * minWickRatio and lowerWick < bodySize * 0.5 and candleRange >= minCandleSizeAtr
+// Bearish engulfing: current bearish body engulfs previous bullish body
+bool bearishEngulfing = isBearishCandle and prevWasBullish and bodySize >= minCandleSizeAtr and close < open[1] and open > close[1]
+// Long upper wick: significant rejection from highs
+bool longUpperWick = upperWick >= lowerWick * 2 and upperWick >= bodySize and candleRange >= minCandleSizeAtr
 
 bool bearishReversalCandle = shootingStar or bearishEngulfing or longUpperWick
 
 // Bullish reversal patterns (at bottoms)
-bool hammer = isBullishCandle and lowerWick >= bodySize * wickRatio and candleRange >= candleSize * atr
-bool bullishEngulfing = isBullishCandle and bodySize >= candleSize * atr and close > open[1] and open < close[1]
-bool longLowerWick = lowerWick >= upperWick * 2 and lowerWick >= bodySize and candleRange >= candleSize * atr
+// Hammer: small body at top, long lower wick
+bool hammer = isBullishCandle and lowerWick >= bodySize * minWickRatio and upperWick < bodySize * 0.5 and candleRange >= minCandleSizeAtr
+// Bullish engulfing: current bullish body engulfs previous bearish body
+bool bullishEngulfing = isBullishCandle and prevWasBearish and bodySize >= minCandleSizeAtr and close > open[1] and open < close[1]
+// Long lower wick: significant rejection from lows
+bool longLowerWick = lowerWick >= upperWick * 2 and lowerWick >= bodySize and candleRange >= minCandleSizeAtr
 
 bool bullishReversalCandle = hammer or bullishEngulfing or longLowerWick
 
@@ -229,11 +351,11 @@ bool bullishReversalCandle = hammer or bullishEngulfing or longLowerWick
 // 3. ROC EXTREME (Momentum at extreme levels)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-roc = 100 * (close - close[rocPeriod]) / close[rocPeriod]
-rocPercentile = ta.percentrank(roc, rocLookback)
+float roc = close[rocPeriod] != 0 ? 100 * (close - close[rocPeriod]) / close[rocPeriod] : 0
+float rocPercentile = ta.percentrank(roc, rocLookback)
 
-bool rocExtremeBullish = rocPercentile <= (100 - rocExtremeAdj)  // Bottom percentile (oversold)
-bool rocExtremeBearish = rocPercentile >= rocExtremeAdj           // Top percentile (overbought)
+bool rocExtremeBullish = rocPercentile <= (100 - rocExtreme)  // Bottom percentile (oversold)
+bool rocExtremeBearish = rocPercentile >= rocExtreme           // Top percentile (overbought)
 
 bool rocGateLong = not requireRocExtreme or rocExtremeBullish
 bool rocGateShort = not requireRocExtreme or rocExtremeBearish
@@ -242,11 +364,12 @@ bool rocGateShort = not requireRocExtreme or rocExtremeBearish
 // 4. VOLUME CLIMAX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-volMa = ta.sma(volume, volPeriod)
-bool volumeClimax = volume >= volMa * volMult
+float volMa = ta.sma(volume, volPeriod)
+float volMaShort = ta.sma(volume, 3)
+bool volumeClimax = volume >= volMa * volMultiplier
 
 // Volume declining after spike (exhaustion pattern) - improved logic
-bool volExhaustionStrong = (volume[1] >= volMa[1] * volMult or volume[2] >= volMa[2] * volMult) and volume < ta.sma(volume, 3)[1]
+bool volExhaustionStrong = (volume[1] >= volMa[1] * volMultiplier or volume[2] >= volMa[2] * volMultiplier) and volume < volMaShort[1]
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 5. MOMENTUM DECELERATION (Price slowing down)
@@ -259,8 +382,8 @@ bool velocityDecreasing = priceVelocity < prevVelocity
 // Check if we're at a significant price extreme
 float priceHigh = ta.highest(high, priceExtremeLookback)
 float priceLow = ta.lowest(low, priceExtremeLookback)
-bool nearHighExtreme = atr > 0 and high >= (priceHigh - (extremeTolAtr * atr))
-bool nearLowExtreme = atr > 0 and low <= (priceLow + (extremeTolAtr * atr))
+bool nearHighExtreme = atrValid and high >= (priceHigh - extremeTolAtrVal)
+bool nearLowExtreme = atrValid and low <= (priceLow + extremeTolAtrVal)
 
 // Structure confirmation: sweep a recent extreme and close back inside.
 float sweepHigh = ta.highest(high, sweepLookback)[1]
@@ -269,31 +392,30 @@ bool sweepShort = not na(sweepHigh) and high > sweepHigh and close < sweepHigh
 bool sweepLong = not na(sweepLow) and low < sweepLow and close > sweepLow
 bool spikeConfirmLongOk = confirmationMode == "Off" or sweepLong
 bool spikeConfirmShortOk = confirmationMode == "Off" or sweepShort
+// Note: "Require Sweep" mode uses sweepLong/sweepShort conditions
 
-int idxHighTF = barstate.isrealtime ? 1 : 0
-int idxCurrTF = barstate.isrealtime ? 0 : 1
-
-[regimeEma0, regimeEmaPrev0, regimeAtr0] = request.security(syminfo.tickerid, regimeTf,
-     [ta.ema(close, regimeEmaLen)[idxHighTF], ta.ema(close, regimeEmaLen)[idxHighTF + regimeSlopeLookback], ta.atr(regimeAtrLen)[idxHighTF]],
+// Request higher timeframe data for regime filter
+// Use [1] offset to avoid repainting on realtime bars
+[regimeEma, regimeEmaPrev, regimeAtr] = request.security(syminfo.tickerid, regimeTf,
+     [ta.ema(close, regimeEmaLen)[1], ta.ema(close, regimeEmaLen)[1 + regimeSlopeLookback], ta.atr(regimeAtrLen)[1]],
      gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
-float regimeEma = regimeEma0[idxCurrTF]
-float regimeEmaPrev = regimeEmaPrev0[idxCurrTF]
-float regimeAtr = regimeAtr0[idxCurrTF]
-float regimeSlopeSignedAtr = (not na(regimeAtr) and regimeAtr != 0.0) ? (regimeEma - regimeEmaPrev) / regimeAtr : na
+// Calculate regime slope normalized by ATR
+float regimeSlopeSignedAtr = (not na(regimeAtr) and regimeAtr > 0) ? (regimeEma - regimeEmaPrev) / regimeAtr : na
 
 bool regimeOkLong = not useRegimeFilter or na(regimeSlopeSignedAtr) or regimeSlopeSignedAtr >= -maxRegimeSlopeAtr
 bool regimeOkShort = not useRegimeFilter or na(regimeSlopeSignedAtr) or regimeSlopeSignedAtr <= maxRegimeSlopeAtr
 
-float regimeSlopeAtr = na(regimeSlopeSignedAtr) ? na : math.abs(regimeSlopeSignedAtr)
-
-// Volatility filter - check if we're in an active market
-float atrSma = ta.sma(atr, 50)
+// Volatility filter - check if we're in an active market (adaptive lookback)
+int volFilterLookback = autoAdaptive ? int(math.max(20, math.min(200, math.round(50 * math.pow(tfMultiplier, 0.6))))) : 50
+float atrSma = ta.sma(atr, volFilterLookback)
 float atrRatio = atrSma > 0 ? atr / atrSma : 0  // Current ATR vs long-term average
-bool volatilityOk = not useVolatilityFilter or atrRatio >= 0.7  // Require 70%+ of average volatility
+// Higher TFs need less volatility threshold as moves are more meaningful
+float volThreshold = autoAdaptive ? (tfMinutes <= 15 ? 0.7 : tfMinutes <= 60 ? 0.6 : 0.5) : 0.7
+bool volatilityOk = not useVolatilityFilter or atrRatio >= volThreshold
 
-float ph = ta.pivothigh(high, pivotLeft, pivotRight)
-float pl = ta.pivotlow(low, pivotLeft, pivotRight)
+float ph = ta.pivothigh(high, pivotLeftAdj, pivotRightAdj)
+float pl = ta.pivotlow(low, pivotLeftAdj, pivotRightAdj)
 var float lastSwingHigh = na
 var float lastSwingLow = na
 if not na(ph)
@@ -345,18 +467,25 @@ if velocityDecreasing
 if nearHighExtreme
     shortScore += 1  // Bonus point for being at price extreme
 
-// CONFIDENCE LEVEL SYSTEM (15m optimized)
+// CONFIDENCE LEVEL SYSTEM (Multi-TF Adaptive)
 // ═══════════════════════════════════════════════════════════════════════════════
-// L3/S3 = 5-7+ points (Highest confidence)
-// L2/S2 = 4 points (Medium confidence)
-// L1/S1 = 3 points (Lower confidence - aggressive only)
+// L3/S3 = Highest confidence (5+ points on lower TFs, 4+ on higher TFs)
+// L2/S2 = Medium confidence 
+// L1/S1 = Lower confidence - aggressive only
+//
+// Higher timeframes get slightly lower thresholds because their signals are more reliable
 
-int minScoreRequired = minConfidenceLevel == "L3/S3 (High only)" ? 5 : 
-     minConfidenceLevel == "L2/S2 (Medium)" ? 4 : 3
+// Base score requirements - adjusted by timeframe
+int baseL3Score = autoAdaptive ? (tfMinutes >= 240 ? 4 : 5) : 5
+int baseL2Score = autoAdaptive ? (tfMinutes >= 240 ? 3 : 4) : 4
+int baseL1Score = autoAdaptive ? (tfMinutes >= 240 ? 2 : 3) : 3
 
-// Determine confidence levels
-int longConfidence = longScore >= 5 ? 3 : longScore == 4 ? 2 : longScore == 3 ? 1 : 0
-int shortConfidence = shortScore >= 5 ? 3 : shortScore == 4 ? 2 : shortScore == 3 ? 1 : 0
+int minScoreRequired = minConfidenceLevel == "High Only (L3/S3)" ? baseL3Score : 
+     minConfidenceLevel == "Medium (L2/S2)" ? baseL2Score : baseL1Score
+
+// Determine confidence levels with adaptive thresholds
+int longConfidence = longScore >= baseL3Score ? 3 : longScore >= baseL2Score ? 2 : longScore >= baseL1Score ? 1 : 0
+int shortConfidence = shortScore >= baseL3Score ? 3 : shortScore >= baseL2Score ? 2 : shortScore >= baseL1Score ? 1 : 0
 
 // Core requirements check
 bool longCoreOk = not requireBothCore or (longHasVelocity and longHasCandle)
@@ -402,11 +531,14 @@ if not na(setupShortBar) and (bar_index - setupShortBar) > maxWaitBars
     setupShortConfidence := na
     setupShortBos := false
 
+// Pre-calculate max BOS level distance
+float maxBosDistVal = maxBosLevelDistAtr * atr
+
 if longSetupMarker
     setupLongBar := bar_index
     setupLongHigh := high
     setupLongLow := low
-    setupLongBosLevel := (bosUsePivots and not na(lastSwingHigh) and atr > 0 and lastSwingHigh > close and (lastSwingHigh - close) <= (maxBosLevelDistAtr * atr)) ? lastSwingHigh : na
+    setupLongBosLevel := (bosUsePivots and not na(lastSwingHigh) and atrValid and lastSwingHigh > close and (lastSwingHigh - close) <= maxBosDistVal) ? lastSwingHigh : na
     setupLongScore := longScore
     setupLongConfidence := longConfidence
     setupLongBos := false
@@ -415,7 +547,7 @@ if shortSetupMarker
     setupShortBar := bar_index
     setupShortHigh := high
     setupShortLow := low
-    setupShortBosLevel := (bosUsePivots and not na(lastSwingLow) and atr > 0 and lastSwingLow < close and (close - lastSwingLow) <= (maxBosLevelDistAtr * atr)) ? lastSwingLow : na
+    setupShortBosLevel := (bosUsePivots and not na(lastSwingLow) and atrValid and lastSwingLow < close and (close - lastSwingLow) <= maxBosDistVal) ? lastSwingLow : na
     setupShortScore := shortScore
     setupShortConfidence := shortConfidence
     setupShortBos := false
@@ -423,7 +555,7 @@ if shortSetupMarker
 bool longSignalRaw = false
 bool shortSignalRaw = false
 
-if entryModel == "Setup (Aggressive)"
+if entryModel == "Immediate"
     longSignalRaw := longSetupMarker and regimeOkLong
     shortSignalRaw := shortSetupMarker and regimeOkShort
 else
@@ -441,20 +573,21 @@ else
     if shortBos
         setupShortBos := true
 
-    if entryModel == "BOS (Close Confirm)"
+    if entryModel == "Break Confirmed"
         longSignalRaw := longBos and regimeOkLong
         shortSignalRaw := shortBos and regimeOkShort
-    else
+    else  // "Break + Retest"
         bool longRetest = setupLongBos and barstate.isconfirmed and low <= longBosLevel + (retestTolAtr * atr) and close > longBosLevel and close > open and (not requireNoNewExtreme or low >= setupLongLow)
         bool shortRetest = setupShortBos and barstate.isconfirmed and high >= shortBosLevel - (retestTolAtr * atr) and close < shortBosLevel and close < open and (not requireNoNewExtreme or high <= setupShortHigh)
 
         longSignalRaw := longRetest and regimeOkLong
         shortSignalRaw := shortRetest and regimeOkShort
 
-int longScoreUsed = longSignalRaw and entryModel != "Setup (Aggressive)" ? setupLongScore : longScore
-int shortScoreUsed = shortSignalRaw and entryModel != "Setup (Aggressive)" ? setupShortScore : shortScore
-int longConfidenceUsed = longSignalRaw and entryModel != "Setup (Aggressive)" ? setupLongConfidence : longConfidence
-int shortConfidenceUsed = shortSignalRaw and entryModel != "Setup (Aggressive)" ? setupShortConfidence : shortConfidence
+// Retrieve stored score/confidence for BOS modes, with null safety fallback to current values
+int longScoreUsed = (longSignalRaw and entryModel != "Immediate" and not na(setupLongScore)) ? setupLongScore : longScore
+int shortScoreUsed = (shortSignalRaw and entryModel != "Immediate" and not na(setupShortScore)) ? setupShortScore : shortScore
+int longConfidenceUsed = (longSignalRaw and entryModel != "Immediate" and not na(setupLongConfidence)) ? setupLongConfidence : longConfidence
+int shortConfidenceUsed = (shortSignalRaw and entryModel != "Immediate" and not na(setupShortConfidence)) ? setupShortConfidence : shortConfidence
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 7. FILTERS
@@ -463,8 +596,14 @@ int shortConfidenceUsed = shortSignalRaw and entryModel != "Setup (Aggressive)" 
 var int lastSignalBar = na
 bool cooldownOk = cooldownBars == 0 or na(lastSignalBar) or (bar_index - lastSignalBar) > cooldownBars
 
-bool longSignal = longSignalRaw and cooldownOk and longScoreUsed > shortScoreUsed
-bool shortSignal = shortSignalRaw and cooldownOk and shortScoreUsed > longScoreUsed
+// Conflict resolution: if both signals fire simultaneously, use higher score
+// If equal scores, prefer the signal matching price position (at high = short, at low = long)
+bool bothRaw = longSignalRaw and shortSignalRaw
+bool equalScores = longScoreUsed == shortScoreUsed
+bool preferLongOnTie = nearLowExtreme and not nearHighExtreme
+bool preferShortOnTie = nearHighExtreme and not nearLowExtreme
+bool longSignal = longSignalRaw and cooldownOk and (not bothRaw or longScoreUsed > shortScoreUsed or (equalScores and preferLongOnTie))
+bool shortSignal = shortSignalRaw and cooldownOk and (not bothRaw or shortScoreUsed > longScoreUsed or (equalScores and preferShortOnTie))
 
 if longSignal or shortSignal
     lastSignalBar := bar_index
@@ -491,8 +630,8 @@ if shortSignal
 // VISUAL SIGNALS WITH CONFIDENCE LEVELS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-bool showTriangles = signalStyle == "Triangles Only" or signalStyle == "Both"
-bool showLabels = signalStyle == "Labels with Confidence" or signalStyle == "Both"
+bool showTriangles = signalStyle == "Triangles" or signalStyle == "Both"
+bool showLabels = signalStyle == "Labels" or signalStyle == "Both"
 
 // Confidence-based colors
 color longColorBase = #00A855
@@ -553,119 +692,107 @@ if showLabels
 // DEBUG TABLE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-if debugMode
-    var table debugTable = table.new(position.top_right, 3, 20, border_width=1)
+var table debugTable = table.new(position.top_right, 3, 24, border_width=1)
+
+if debugMode and barstate.islast
+    table.cell(debugTable, 0, 0, "Condition", text_color=color.white, bgcolor=color.gray)
+    table.cell(debugTable, 1, 0, "Bullish", text_color=color.white, bgcolor=color.gray)
+    table.cell(debugTable, 2, 0, "Bearish", text_color=color.white, bgcolor=color.gray)
     
-    if barstate.islast
-        table.cell(debugTable, 0, 0, "Condition", text_color=color.white, bgcolor=color.gray)
-        table.cell(debugTable, 1, 0, "Bullish", text_color=color.white, bgcolor=color.gray)
-        table.cell(debugTable, 2, 0, "Bearish", text_color=color.white, bgcolor=color.gray)
-        
-        table.cell(debugTable, 0, 1, "Parabolic Move", text_color=color.white)
-        table.cell(debugTable, 1, 1, parabolicDown ? "✓ (2pts)" : "✗", 
-             text_color=parabolicDown ? color.lime : color.red)
-        table.cell(debugTable, 2, 1, parabolicUp ? "✓ (2pts)" : "✗", 
-             text_color=parabolicUp ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 2, "Reversal Candle", text_color=color.white)
-        table.cell(debugTable, 1, 2, bullishReversalCandle ? "✓ (2pts)" : "✗", 
-             text_color=bullishReversalCandle ? color.lime : color.red)
-        table.cell(debugTable, 2, 2, bearishReversalCandle ? "✓ (2pts)" : "✗", 
-             text_color=bearishReversalCandle ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 3, "ROC Extreme", text_color=color.white)
-        table.cell(debugTable, 1, 3, rocExtremeBullish ? "✓ (1pt)" : "✗", 
-             text_color=rocExtremeBullish ? color.lime : color.red)
-        table.cell(debugTable, 2, 3, rocExtremeBearish ? "✓ (1pt)" : "✗", 
-             text_color=rocExtremeBearish ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 4, "Volume Climax", text_color=color.white)
-        table.cell(debugTable, 1, 4, volumeClimax ? "✓ (1pt)" : "✗", 
-             text_color=volumeClimax ? color.lime : color.red)
-        table.cell(debugTable, 2, 4, volumeClimax ? "✓ (1pt)" : "✗", 
-             text_color=volumeClimax ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 5, "Deceleration", text_color=color.white)
-        table.cell(debugTable, 1, 5, velocityDecreasing ? "✓ (1pt)" : "✗", 
-             text_color=velocityDecreasing ? color.lime : color.red)
-        table.cell(debugTable, 2, 5, velocityDecreasing ? "✓ (1pt)" : "✗", 
-             text_color=velocityDecreasing ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 6, "Price Extreme", text_color=color.white)
-        table.cell(debugTable, 1, 6, nearLowExtreme ? "✓ (1pt)" : "✗", 
-             text_color=nearLowExtreme ? color.lime : color.red)
-        table.cell(debugTable, 2, 6, nearHighExtreme ? "✓ (1pt)" : "✗", 
-             text_color=nearHighExtreme ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 7, "───────────", text_color=color.gray)
-        table.cell(debugTable, 1, 7, "─────", text_color=color.gray)
-        table.cell(debugTable, 2, 7, "─────", text_color=color.gray)
-        
-        table.cell(debugTable, 0, 8, "SCORE / Required", text_color=color.white)
-        table.cell(debugTable, 1, 8, str.tostring(longScore) + " / " + str.tostring(minScoreRequired), 
-             text_color=longScore >= minScoreRequired ? color.lime : color.orange)
-        table.cell(debugTable, 2, 8, str.tostring(shortScore) + " / " + str.tostring(minScoreRequired), 
-             text_color=shortScore >= minScoreRequired ? color.lime : color.orange)
-        
-        table.cell(debugTable, 0, 9, "Core (Vel+Candle)", text_color=color.white)
-        table.cell(debugTable, 1, 9, longCoreOk ? "✓" : "✗ BLOCKING", 
-             text_color=longCoreOk ? color.lime : color.red)
-        table.cell(debugTable, 2, 9, shortCoreOk ? "✓" : "✗ BLOCKING", 
-             text_color=shortCoreOk ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 10, "Cooldown", text_color=color.white)
-        table.cell(debugTable, 1, 10, cooldownOk ? "✓" : "✗ BLOCKING", 
-             text_color=cooldownOk ? color.lime : color.red)
-        table.cell(debugTable, 2, 10, cooldownOk ? "✓" : "✗ BLOCKING", 
-             text_color=cooldownOk ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 11, "Volatility Filter", text_color=color.white)
-        table.cell(debugTable, 1, 11, volatilityOk ? "✓" : "✗ BLOCKING", 
-             text_color=volatilityOk ? color.lime : color.red)
-        table.cell(debugTable, 2, 11, volatilityOk ? "✓" : "✗ BLOCKING", 
-             text_color=volatilityOk ? color.lime : color.red)
-        
-        table.cell(debugTable, 0, 12, "───────────", text_color=color.gray)
-        table.cell(debugTable, 1, 12, "─────", text_color=color.gray)
-        table.cell(debugTable, 2, 12, "─────", text_color=color.gray)
-        
-        table.cell(debugTable, 0, 13, "CONFIDENCE LEVEL", text_color=color.white, bgcolor=color.navy)
-        string longText = longL3 ? "🚀 L3" : longL2 ? "🚀 L2" : longL1 ? "🚀 L1" : "—"
-        string shortText = shortS3 ? "🔻 S3" : shortS2 ? "🔻 S2" : shortS1 ? "🔻 S1" : "—"
-        table.cell(debugTable, 1, 13, longText, 
-             text_color=color.white, bgcolor=longSignal ? color.green : color.navy)
-        table.cell(debugTable, 2, 13, shortText, 
-             text_color=color.white, bgcolor=shortSignal ? color.red : color.navy)
-        
-        table.cell(debugTable, 0, 14, "───────────", text_color=color.gray)
-        table.cell(debugTable, 1, 14, "─────", text_color=color.gray)
-        table.cell(debugTable, 2, 14, "─────", text_color=color.gray)
-        
-        table.cell(debugTable, 0, 15, "Price Velocity", text_color=color.white)
-        table.cell(debugTable, 1, 15, str.tostring(priceVelocity, "#.##") + "x ATR", text_color=color.orange)
-        table.cell(debugTable, 2, 15, "", text_color=color.white)
-        
-        table.cell(debugTable, 0, 16, "ROC Percentile", text_color=color.white)
-        table.cell(debugTable, 1, 16, str.tostring(rocPercentile, "#.##") + "%", text_color=color.orange)
-        table.cell(debugTable, 2, 16, "", text_color=color.white)
-        
-        table.cell(debugTable, 0, 17, "Volume Ratio", text_color=color.white)
-        table.cell(debugTable, 1, 17, volMa > 0 ? str.tostring(volume/volMa, "#.##") + "x" : "—", text_color=color.orange)
-        table.cell(debugTable, 2, 17, "", text_color=color.white)
-        
-        table.cell(debugTable, 0, 18, "ATR Ratio", text_color=color.white)
-        table.cell(debugTable, 1, 18, str.tostring(atrRatio, "#.##") + "x", text_color=color.orange)
-        table.cell(debugTable, 2, 18, "", text_color=color.white)
-        
-        table.cell(debugTable, 0, 19, "Candle Type", text_color=color.white)
-        string candleType = shootingStar ? "Shooting Star" : 
-             bearishEngulfing ? "Bear Engulf" : 
-             longUpperWick ? "Long U-Wick" :
-             hammer ? "Hammer" :
-             bullishEngulfing ? "Bull Engulf" :
-             longLowerWick ? "Long L-Wick" : "Regular"
-        table.cell(debugTable, 1, 19, candleType, text_color=color.orange)
-        table.cell(debugTable, 2, 19, "", text_color=color.white)
+    table.cell(debugTable, 0, 1, "Parabolic Move", text_color=color.white)
+    table.cell(debugTable, 1, 1, parabolicDown ? "✓ (2pts)" : "✗", text_color=parabolicDown ? color.lime : color.red)
+    table.cell(debugTable, 2, 1, parabolicUp ? "✓ (2pts)" : "✗", text_color=parabolicUp ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 2, "Reversal Candle", text_color=color.white)
+    table.cell(debugTable, 1, 2, bullishReversalCandle ? "✓ (2pts)" : "✗", text_color=bullishReversalCandle ? color.lime : color.red)
+    table.cell(debugTable, 2, 2, bearishReversalCandle ? "✓ (2pts)" : "✗", text_color=bearishReversalCandle ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 3, "ROC Extreme", text_color=color.white)
+    table.cell(debugTable, 1, 3, rocExtremeBullish ? "✓ (1pt)" : "✗", text_color=rocExtremeBullish ? color.lime : color.red)
+    table.cell(debugTable, 2, 3, rocExtremeBearish ? "✓ (1pt)" : "✗", text_color=rocExtremeBearish ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 4, "Volume Climax", text_color=color.white)
+    table.cell(debugTable, 1, 4, volumeClimax ? "✓ (1pt)" : "✗", text_color=volumeClimax ? color.lime : color.red)
+    table.cell(debugTable, 2, 4, volumeClimax ? "✓ (1pt)" : "✗", text_color=volumeClimax ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 5, "Deceleration", text_color=color.white)
+    table.cell(debugTable, 1, 5, velocityDecreasing ? "✓ (1pt)" : "✗", text_color=velocityDecreasing ? color.lime : color.red)
+    table.cell(debugTable, 2, 5, velocityDecreasing ? "✓ (1pt)" : "✗", text_color=velocityDecreasing ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 6, "Price Extreme", text_color=color.white)
+    table.cell(debugTable, 1, 6, nearLowExtreme ? "✓ (1pt)" : "✗", text_color=nearLowExtreme ? color.lime : color.red)
+    table.cell(debugTable, 2, 6, nearHighExtreme ? "✓ (1pt)" : "✗", text_color=nearHighExtreme ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 7, "───────────", text_color=color.gray)
+    table.cell(debugTable, 1, 7, "─────", text_color=color.gray)
+    table.cell(debugTable, 2, 7, "─────", text_color=color.gray)
+    
+    table.cell(debugTable, 0, 8, "SCORE / Required", text_color=color.white)
+    table.cell(debugTable, 1, 8, str.tostring(longScore) + " / " + str.tostring(minScoreRequired), text_color=longScore >= minScoreRequired ? color.lime : color.orange)
+    table.cell(debugTable, 2, 8, str.tostring(shortScore) + " / " + str.tostring(minScoreRequired), text_color=shortScore >= minScoreRequired ? color.lime : color.orange)
+    
+    table.cell(debugTable, 0, 9, "Core (Vel+Candle)", text_color=color.white)
+    table.cell(debugTable, 1, 9, longCoreOk ? "✓" : "✗ BLOCKING", text_color=longCoreOk ? color.lime : color.red)
+    table.cell(debugTable, 2, 9, shortCoreOk ? "✓" : "✗ BLOCKING", text_color=shortCoreOk ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 10, "Cooldown", text_color=color.white)
+    table.cell(debugTable, 1, 10, cooldownOk ? "✓" : "✗ BLOCKING", text_color=cooldownOk ? color.lime : color.red)
+    table.cell(debugTable, 2, 10, cooldownOk ? "✓" : "✗ BLOCKING", text_color=cooldownOk ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 11, "Volatility Filter", text_color=color.white)
+    table.cell(debugTable, 1, 11, volatilityOk ? "✓" : "✗ BLOCKING", text_color=volatilityOk ? color.lime : color.red)
+    table.cell(debugTable, 2, 11, volatilityOk ? "✓" : "✗ BLOCKING", text_color=volatilityOk ? color.lime : color.red)
+    
+    table.cell(debugTable, 0, 12, "───────────", text_color=color.gray)
+    table.cell(debugTable, 1, 12, "─────", text_color=color.gray)
+    table.cell(debugTable, 2, 12, "─────", text_color=color.gray)
+    
+    table.cell(debugTable, 0, 13, "CONFIDENCE LEVEL", text_color=color.white, bgcolor=color.navy)
+    string longText = longL3 ? "🚀 L3" : longL2 ? "🚀 L2" : longL1 ? "🚀 L1" : "—"
+    string shortText = shortS3 ? "🔻 S3" : shortS2 ? "🔻 S2" : shortS1 ? "🔻 S1" : "—"
+    table.cell(debugTable, 1, 13, longText, text_color=color.white, bgcolor=longSignal ? color.green : color.navy)
+    table.cell(debugTable, 2, 13, shortText, text_color=color.white, bgcolor=shortSignal ? color.red : color.navy)
+    
+    table.cell(debugTable, 0, 14, "───────────", text_color=color.gray)
+    table.cell(debugTable, 1, 14, "─────", text_color=color.gray)
+    table.cell(debugTable, 2, 14, "─────", text_color=color.gray)
+    
+    table.cell(debugTable, 0, 15, "Price Velocity", text_color=color.white)
+    table.cell(debugTable, 1, 15, str.tostring(priceVelocity, "#.##") + "x ATR", text_color=color.orange)
+    table.cell(debugTable, 2, 15, "", text_color=color.white)
+    
+    table.cell(debugTable, 0, 16, "ROC Percentile", text_color=color.white)
+    table.cell(debugTable, 1, 16, str.tostring(rocPercentile, "#.##") + "%", text_color=color.orange)
+    table.cell(debugTable, 2, 16, "", text_color=color.white)
+    
+    table.cell(debugTable, 0, 17, "Volume Ratio", text_color=color.white)
+    table.cell(debugTable, 1, 17, volMa > 0 ? str.tostring(volume/volMa, "#.##") + "x" : "—", text_color=color.orange)
+    table.cell(debugTable, 2, 17, "", text_color=color.white)
+    
+    table.cell(debugTable, 0, 18, "ATR Ratio", text_color=color.white)
+    table.cell(debugTable, 1, 18, str.tostring(atrRatio, "#.##") + "x", text_color=color.orange)
+    table.cell(debugTable, 2, 18, "", text_color=color.white)
+    
+    table.cell(debugTable, 0, 19, "Candle Type", text_color=color.white)
+    string candleType = shootingStar ? "Shooting Star" : bearishEngulfing ? "Bear Engulf" : longUpperWick ? "Long U-Wick" : hammer ? "Hammer" : bullishEngulfing ? "Bull Engulf" : longLowerWick ? "Long L-Wick" : "Regular"
+    table.cell(debugTable, 1, 19, candleType, text_color=color.orange)
+    table.cell(debugTable, 2, 19, "", text_color=color.white)
+    
+    table.cell(debugTable, 0, 20, "───────────", text_color=color.gray)
+    table.cell(debugTable, 1, 20, "─────", text_color=color.gray)
+    table.cell(debugTable, 2, 20, "─────", text_color=color.gray)
+    
+    table.cell(debugTable, 0, 21, "TF Category", text_color=color.white, bgcolor=color.teal)
+    table.cell(debugTable, 1, 21, tfCategory, text_color=color.white, bgcolor=color.teal)
+    table.cell(debugTable, 2, 21, str.tostring(tfMinutes) + "m", text_color=color.white, bgcolor=color.teal)
+    
+    table.cell(debugTable, 0, 22, "TF Multiplier", text_color=color.white)
+    table.cell(debugTable, 1, 22, str.tostring(tfMultiplier, "#.##") + "x", text_color=color.aqua)
+    table.cell(debugTable, 2, 22, "Thresh: " + str.tostring(thresholdMultiplier, "#.##"), text_color=color.aqua)
+    
+    table.cell(debugTable, 0, 23, "Velocity Period", text_color=color.white)
+    table.cell(debugTable, 1, 23, str.tostring(velocityPeriod) + " bars", text_color=color.aqua)
+    table.cell(debugTable, 2, 23, "ATR: " + str.tostring(atrPeriod), text_color=color.aqua)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALERTS

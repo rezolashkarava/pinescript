@@ -48,7 +48,7 @@ showMtfSection = input.bool(true, "└─ Multi-Timeframe", group=G1,
 string G2 = "₿ Symbol"
 useCurrentChart = input.bool(false, "Use Current Chart Symbol", group=G2,
      tooltip="ON: Analyze the symbol you're viewing\nOFF: Analyze the specified symbol below (useful for BTC dominance on any chart)")
-btcSymbol = input.string("BINANCE:BTCUSDT", "Symbol to Analyze", group=G2,
+btcSymbol = input.string("BINANCE:BTCUSDT.P", "Symbol to Analyze", group=G2,
      tooltip="The symbol to analyze (only used when 'Use Current Chart' is OFF)\n\nExamples:\n• BINANCE:BTCUSDT\n• COINBASE:BTCUSD\n• BYBIT:BTCUSDT.P\n• INDEX:BTCUSD")
 
 // Determine effective symbol
@@ -262,6 +262,36 @@ float tf4BuyPressure = calcBuyPressure(tf4High, tf4Low, tf4Close, tf4Open)
 bool tf4Bullish = tf4BuyPressure > 0.5
 float tf4VsAvg = tf4AvgVol > 0 ? tf4Vol / tf4AvgVol : 1.0
 
+// === LIVE PRICE DATA ===
+[livePrice, livePriceOpen] = request.security(effectiveSymbol, timeframe.period, [close, open], lookahead=barmerge.lookahead_off)
+bool priceUp = livePrice >= livePriceOpen
+color priceColor = priceUp ? bullishColor : bearishColor
+
+// Format price with appropriate decimal places
+formatPrice(float price) =>
+    string s = ""
+    if na(price)
+        s := "—"
+    else if price >= 10000
+        s := str.tostring(price, "#.##")
+    else if price >= 1000
+        s := str.tostring(price, "#.##")
+    else if price >= 100
+        s := str.tostring(price, "#.###")
+    else if price >= 1
+        s := str.tostring(price, "#.####")
+    else
+        s := str.tostring(price, "#.######")
+    s
+
+// Extract short symbol name for display
+getShortSymbol(string sym) =>
+    string result = sym
+    int colonPos = str.pos(sym, ":")
+    if colonPos >= 0
+        result := str.substring(sym, colonPos + 1)
+    result
+
 // === INTRABAR DATA FOR BUY/SELL ANALYSIS ===
 arrOpen = request.security_lower_tf(effectiveSymbol, powerLtfSafe, open, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
 arrHigh = request.security_lower_tf(effectiveSymbol, powerLtfSafe, high, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
@@ -442,6 +472,7 @@ var string lastTableSize = na
 
 if barstate.islast and showVolumeTable
     // Count rows needed
+    int priceRow = 1  // Live price row at top
     int tfCount = showMtfSection ? ((showTf1 ? 1 : 0) + (showTf2 ? 1 : 0) + (showTf3 ? 1 : 0) + (showTf4 ? 1 : 0)) : 0
     int mtfHeaderRows = showMtfSection ? 1 : 0
     int separatorRows = (showMtfSection and showCurrentVolSection) ? 1 : 0
@@ -451,7 +482,7 @@ if barstate.islast and showVolumeTable
     int avgHeaderRows = (showCurrentVolSection and showAvgSection) ? 1 : 0  // AVG header
     int avgRows = (showCurrentVolSection and showAvgSection) ? 2 : 0  // Avg Buy, Avg Sell
     
-    int totalRows = intrabarHeaderRows + currentVolRows + netFlowRows + avgHeaderRows + avgRows + separatorRows + mtfHeaderRows + tfCount
+    int totalRows = priceRow + intrabarHeaderRows + currentVolRows + netFlowRows + avgHeaderRows + avgRows + separatorRows + mtfHeaderRows + tfCount
     
     // Check if settings changed
     bool settingsChanged = (not na(lastWidgetLocation) and widgetPosition != lastWidgetLocation) or
@@ -474,11 +505,29 @@ if barstate.islast and showVolumeTable
     
     // Text size
     txtSize = getTextSize(tableSize)
+    // Larger size for price row
+    priceTxtSize = switch tableSize
+        "tiny" => size.small
+        "small" => size.normal
+        "normal" => size.large
+        "large" => size.huge
+        => size.large
     
     int row = 0
     
     // ═══════════════════════════════════════════════════════
-    // INTRABAR SECTION (Buy/Sell Analysis) - AT TOP
+    // LIVE PRICE ROW - AT VERY TOP
+    // ═══════════════════════════════════════════════════════
+    string symbolDisplay = getShortSymbol(effectiveSymbol)
+    string priceDisplay = formatPrice(livePrice)
+    string priceArrow = priceUp ? " ▲" : " ▼"
+    table.cell(widget, 0, row, padText("₿ " + symbolDisplay), text_color=textColor, text_size=priceTxtSize, text_font_family=font.family_monospace)
+    table.merge_cells(widget, 1, row, 3, row)
+    table.cell(widget, 1, row, padText(priceDisplay + priceArrow), text_color=priceColor, text_size=priceTxtSize, text_font_family=font.family_monospace)
+    row += 1
+    
+    // ═══════════════════════════════════════════════════════
+    // INTRABAR SECTION (Buy/Sell Analysis)
     // ═══════════════════════════════════════════════════════
     if showCurrentVolSection
         // Header row for Intrabar section

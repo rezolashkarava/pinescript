@@ -104,7 +104,7 @@ float er = erDen != 0 ? math.abs(close - close[erLen]) / erDen : 0
 int chopLen = autoTimeframeAdapt ? int(math.max(10, math.round((isScalp ? 14 : 20) * tfMultiplier))) : (isScalp ? 14 : 20)
 float trSum = math.sum(ta.tr(true), chopLen)
 float rangeN = ta.highest(high, chopLen) - ta.lowest(low, chopLen)
-float chop = rangeN != 0 and chopLen > 1 ? 100 * math.log10(trSum / rangeN) / math.log10(chopLen) : 100
+float chop = rangeN > 0 and trSum > 0 and chopLen > 1 ? 100 * math.log10(trSum / rangeN) / math.log10(chopLen) : 100
 
 bool isTrending = adx > (isScalp ? 23 : 25) and er > (isScalp ? 0.45 : 0.50) and chop < (isScalp ? 55 : 52)
 bool isHighVolatility = atrPercent > (isScalp ? 1.2 : 1.6)
@@ -210,8 +210,15 @@ if not na(oscPivotHigh) and not na(pricePivotHigh)
 
 string htf = tfMinutes <= 1 ? "5" : tfMinutes <= 5 ? "15" : tfMinutes <= 15 ? "60" : tfMinutes <= 60 ? "240" : "D"
 
+// Calculate chop properly on HTF (inline calculation)
+htfChopCalc() =>
+    int _chopLen = 14
+    float _trSum = math.sum(ta.tr(true), _chopLen)
+    float _rangeN = ta.highest(high, _chopLen) - ta.lowest(low, _chopLen)
+    _rangeN > 0 and _trSum > 0 and _chopLen > 1 ? 100 * math.log10(_trSum / _rangeN) / math.log10(_chopLen) : 100
+
 [htfTrendUp, htfChop] = request.security(syminfo.tickerid, htf,
-     [ta.ema(close, 50) > ta.ema(close, 200), chop], lookahead=barmerge.lookahead_off)
+     [ta.ema(close, 50) > ta.ema(close, 200), htfChopCalc()], lookahead=barmerge.lookahead_off)
 
 bool htfSupportsLong = useMultiTimeframe ? (htfTrendUp or htfChop > 55) : true
 bool htfSupportsShort = useMultiTimeframe ? (not htfTrendUp or htfChop > 55) : true
@@ -269,7 +276,6 @@ if upTrendStrong and parabolicUp and not allowCatchKnife
 // Penalty: swing mode dislikes chop
 if not isScalp and useChopFilterSwing and chop >= 62
     longScore -= 1.0
-if not isScalp and useChopFilterSwing and chop >= 62
     shortScore -= 1.0
 
 longScore := math.max(longScore, 0.0)
@@ -384,8 +390,8 @@ alertcondition(alertHighSignals and shortSignal and shortConfidence == 2, "⚡ H
 alertcondition(alertStandardSignals and longSignal and longConfidence <= 1, "✓ Standard Long", "✓ STANDARD LONG\nPE-RP v3.0")
 alertcondition(alertStandardSignals and shortSignal and shortConfidence <= 1, "✓ Standard Short", "✓ STANDARD SHORT\nPE-RP v3.0")
 
-bool enteringOverbought = ta.cross(osc, upperZone) and osc > upperZone
-bool enteringOversold = ta.cross(osc, lowerZone) and osc < lowerZone
+bool enteringOverbought = ta.crossover(osc, upperZone)
+bool enteringOversold = ta.crossunder(osc, lowerZone)
 bool extremeOverbought = osc >= 85
 bool extremeOversold = osc <= 15
 
