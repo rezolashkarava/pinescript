@@ -1,0 +1,405 @@
+//@version=6
+indicator("BTC Volume Analysis [Paganie]", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// BTC VOLUME ANALYSIS [PAGANIE]
+// Intrabar volume dominance analysis for Bitcoin
+// Designed to complement ICT Order Block Pro [Paganie]
+// ============================================================================
+
+// === INPUTS ===
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SYMBOL & TIMEFRAME
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string G1 = "₿ Symbol & Timeframe"
+btcSymbol = input.string("BINANCE:BTCUSDT", "Symbol", group=G1,
+     tooltip="Symbol to analyze volume\nExamples: BINANCE:BTCUSDT, COINBASE:BTCUSD, BYBIT:BTCUSDT.P")
+useCustomTf = input.bool(false, "Use Custom Timeframe", group=G1,
+     tooltip="Enable to analyze volume from a different timeframe")
+customTf = input.timeframe("15", "Timeframe", group=G1,
+     tooltip="Timeframe to analyze (only used when Custom TF is enabled)")
+avgVolumePeriod = input.int(10, "Average Volume Period", minval=1, maxval=100, group=G1,
+     tooltip="Number of bars to calculate average volume")
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INTRABAR SETTINGS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string G2 = "📊 Intrabar Analysis"
+ltfMode = input.string("Auto", "LTF Mode", options=["Auto", "Manual"], group=G2,
+     tooltip="Auto: Optimizes lower timeframe based on chart TF\nManual: Use your selected timeframe")
+manualLtf = input.timeframe("1", "Manual Lower TF", group=G2,
+     tooltip="Only used when LTF Mode is Manual\nRecommended: 1-5 min for most charts")
+smoothingLen = input.int(3, "Smoothing Length", minval=1, maxval=10, group=G2,
+     tooltip="EMA smoothing for stability")
+minIntrabars = input.int(4, "Min Intrabars", minval=1, maxval=20, group=G2,
+     tooltip="Minimum intrabar candles required for confident reading")
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// STYLE
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string G3 = "🎨 Style"
+color volumeBuyColor = input.color(color.new(#00bfff, 0), "Volume Buy", inline="colors", group=G3)
+color volumeSellColor = input.color(color.new(#d946ef, 0), "Volume Sell", inline="colors", group=G3)
+widgetPosition = input.string("Top Right", "Position", 
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left"], group=G3)
+tableOffset = input.int(0, "Table Vertical Offset (rows)", minval=0, maxval=10, group=G3,
+     tooltip="Add empty rows above the table to offset its position")
+tableSize = input.string("normal", "Size Table", options=["tiny", "small", "normal", "large"], group=G3)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DISPLAY OPTIONS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string G4 = "📋 Display Options"
+showVolumeTable = input.bool(true, "Show Volume Table", group=G4)
+showOnMainChart = input.bool(true, "Display Table on Main Chart", group=G4,
+     tooltip="When disabled, table is hidden but calculations still run")
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// VISUAL ELEMENTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string G5 = "📈 Visual Elements"
+barsRight = input.int(10, "Bars Right", minval=0, maxval=50, inline="bars", group=G5)
+barsLeft = input.int(15, "- Left", minval=1, maxval=100, inline="bars", group=G5,
+     tooltip="Range of bars to display volume visuals")
+showBoxes = input.bool(false, "Show Boxes", inline="vis1", group=G5)
+showLines = input.bool(true, "Show Lines", inline="vis1", group=G5)
+showLabels = input.bool(true, "Show Labels", inline="vis2", group=G5)
+showVolume = input.bool(true, "Show Volume", inline="vis2", group=G5)
+extendUntilFill = input.bool(true, "Extend Until Fill", group=G5,
+     tooltip="Extend visual elements to the right edge")
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TABLE SECTIONS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string G6 = "📊 Table Sections"
+showNetFlow = input.bool(true, "Show Net Flow", group=G6)
+showAvgSection = input.bool(true, "Show Average Section", group=G6)
+showDominance = input.bool(true, "Show Dominance Indicator", group=G6)
+
+// === HELPER FUNCTIONS ===
+formatVolume(float vol) =>
+    string s = ""
+    if na(vol) or vol == 0
+        s := "0"
+    else
+        float k = vol / 1000.0
+        float m = vol / 1000000.0
+        if m >= 1.0 or k >= 999.5
+            s := str.tostring(math.round(m * 100) / 100) + "M"
+        else if k >= 1.0
+            s := str.tostring(math.round(k * 100) / 100) + "K"
+        else
+            s := str.tostring(math.round(vol))
+    s
+
+round2(float x) =>
+    math.round(x * 100) / 100
+
+getWidgetPosition(string loc) =>
+    switch loc
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        => position.top_right
+
+getTextSize(string sz) =>
+    switch sz
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+        => size.normal
+
+// === TIMEFRAME LOGIC ===
+tf_in_minutes = timeframe.in_seconds() / 60
+
+getPowerLtf() =>
+    string ltf = "1"
+    if tf_in_minutes <= 5
+        ltf := "1"
+    else if tf_in_minutes <= 15
+        ltf := "1"
+    else if tf_in_minutes <= 60
+        ltf := "5"
+    else if tf_in_minutes <= 240
+        ltf := "15"
+    else if tf_in_minutes <= 1440
+        ltf := "60"
+    else
+        ltf := "240"
+    ltf
+
+getAutoSmoothingLen() =>
+    tf_in_minutes <= 5 ? 2 : tf_in_minutes <= 15 ? 3 : tf_in_minutes <= 60 ? 4 : 5
+
+// Determine effective settings
+string effectiveLtf = ltfMode == "Auto" ? getPowerLtf() : manualLtf
+int effectiveSmoothing = ltfMode == "Auto" ? getAutoSmoothingLen() : smoothingLen
+
+// Safety check: never request higher TF than chart
+int chartTfSec = timeframe.in_seconds()
+int powerTfSec = timeframe.in_seconds(effectiveLtf)
+string powerLtfSafe = powerTfSec <= chartTfSec ? effectiveLtf : timeframe.period
+
+// Custom timeframe for main data (if enabled)
+string dataTf = useCustomTf ? customTf : timeframe.period
+
+// === BTC INTRABAR DATA REQUESTS ===
+btcArrOpen = request.security_lower_tf(btcSymbol, powerLtfSafe, open, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+btcArrClose = request.security_lower_tf(btcSymbol, powerLtfSafe, close, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+btcArrVol = request.security_lower_tf(btcSymbol, powerLtfSafe, volume, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+
+// BTC price for visual elements
+[btcHigh, btcLow, btcClose] = request.security(btcSymbol, dataTf, [high, low, close], lookahead=barmerge.lookahead_off)
+
+// === CALCULATE BTC VOLUME METRICS ===
+calcBtcVolume() =>
+    float buyVol = 0.0
+    float sellVol = 0.0
+    int sizeVol = array.size(btcArrVol)
+    int sizeOpen = array.size(btcArrOpen)
+    int sizeClose = array.size(btcArrClose)
+    int intrabarCount = math.min(sizeVol, math.min(sizeOpen, sizeClose))
+    int lastDir = 0
+    
+    if intrabarCount > 0
+        for i = 0 to intrabarCount - 1
+            float o = array.get(btcArrOpen, i)
+            float c = array.get(btcArrClose, i)
+            float v = array.get(btcArrVol, i)
+            
+            int dir = 0
+            if c > o
+                dir := 1    // Bullish intrabar
+            else if c < o
+                dir := -1   // Bearish intrabar
+            else
+                dir := lastDir  // Carry last direction for dojis
+            
+            if dir == 1
+                buyVol += v
+            else if dir == -1
+                sellVol += v
+            
+            if dir != 0
+                lastDir := dir
+    
+    [buyVol, sellVol, intrabarCount]
+
+[rawBuyVol, rawSellVol, intrabarCount] = calcBtcVolume()
+
+// Current bar totals
+float rawTotal = rawBuyVol + rawSellVol
+float rawBuyPct = rawTotal > 0 ? (rawBuyVol / rawTotal) * 100 : 50.0
+float rawSellPct = rawTotal > 0 ? (rawSellVol / rawTotal) * 100 : 50.0
+float rawNetFlow = rawBuyVol - rawSellVol
+
+// Apply smoothing
+float smoothedBuyPct = ta.ema(rawBuyPct, effectiveSmoothing)
+float smoothedSellPct = ta.ema(rawSellPct, effectiveSmoothing)
+float smoothedTotal = ta.ema(rawTotal, effectiveSmoothing)
+float smoothedBuyVol = ta.ema(rawBuyVol, effectiveSmoothing)
+float smoothedSellVol = ta.ema(rawSellVol, effectiveSmoothing)
+
+// Average calculations (rolling lookback)
+float avgTotal = ta.sma(rawTotal, avgVolumePeriod)
+float avgBuyVol = ta.sma(rawBuyVol, avgVolumePeriod)
+float avgSellVol = ta.sma(rawSellVol, avgVolumePeriod)
+
+// Low confidence check
+bool lowConfidence = intrabarCount < minIntrabars or rawTotal == 0 or na(rawTotal)
+
+// Determine dominant side
+int dominantSide = smoothedBuyPct > smoothedSellPct ? 1 : (smoothedSellPct > smoothedBuyPct ? -1 : 0)
+
+// === VISUAL ELEMENTS (Lines, Boxes, Labels) ===
+var line[] volLines = array.new_line()
+var box[] volBoxes = array.new_box()
+var label[] volLabels = array.new_label()
+
+// Draw visuals on last bar
+if barstate.islast and (showBoxes or showLines or showLabels)
+    // Clean up existing visuals
+    for ln in volLines
+        line.delete(ln)
+    for bx in volBoxes
+        box.delete(bx)
+    for lbl in volLabels
+        label.delete(lbl)
+    
+    array.clear(volLines)
+    array.clear(volBoxes)
+    array.clear(volLabels)
+    
+    // Draw for recent bars
+    for i = 0 to barsLeft - 1
+        int idx = bar_index - i
+        if idx >= 0
+            // Get historical buy/sell percentages
+            float histBuyPct = smoothedBuyPct[i]
+            float histSellPct = smoothedSellPct[i]
+            bool histDominantBuy = histBuyPct > histSellPct
+            
+            if not na(histBuyPct) and not na(histSellPct)
+                float priceHigh = high[i]
+                float priceLow = low[i]
+                float priceRange = priceHigh - priceLow
+                
+                // Draw boxes showing dominance
+                if showBoxes
+                    color boxCol = histDominantBuy ? color.new(volumeBuyColor, 80) : color.new(volumeSellColor, 80)
+                    color borderCol = histDominantBuy ? volumeBuyColor : volumeSellColor
+                    int rightEdge = extendUntilFill ? bar_index + barsRight : idx + 1
+                    box newBox = box.new(idx, priceHigh, rightEdge, priceLow, 
+                         border_color=borderCol, bgcolor=boxCol, border_width=1)
+                    array.push(volBoxes, newBox)
+                
+                // Draw lines showing dominance level within candle
+                if showLines and priceRange > 0
+                    float domLevel = priceLow + priceRange * (histBuyPct / 100)
+                    color lineCol = histDominantBuy ? volumeBuyColor : volumeSellColor
+                    int rightEdge = extendUntilFill ? bar_index + barsRight : idx + 1
+                    line newLine = line.new(idx, domLevel, rightEdge, domLevel,
+                         color=lineCol, width=2)
+                    array.push(volLines, newLine)
+    
+    // Current bar label
+    if showLabels and showVolume
+        string lblText = "B:" + formatVolume(rawBuyVol) + " | S:" + formatVolume(rawSellVol)
+        color lblCol = dominantSide == 1 ? volumeBuyColor : volumeSellColor
+        label newLbl = label.new(bar_index, high, lblText,
+             color=color.new(#000000, 60), textcolor=lblCol, size=size.small)
+        array.push(volLabels, newLbl)
+
+// === WIDGET TABLE ===
+var table widget = na
+var string lastWidgetLocation = na
+var string lastTableSize = na
+
+bool shouldShowTable = showVolumeTable and showOnMainChart
+
+if barstate.islast and shouldShowTable
+    // Check if settings changed - need to recreate table
+    bool settingsChanged = (not na(lastWidgetLocation) and widgetPosition != lastWidgetLocation) or
+                           (not na(lastTableSize) and tableSize != lastTableSize)
+    
+    if settingsChanged
+        if not na(widget)
+            table.delete(widget)
+            widget := na
+    
+    // Calculate row count based on settings
+    int baseRows = 5  // header, subheader, labels, values, percentages
+    int offsetRows = tableOffset
+    int extraRows = 0
+    if showNetFlow
+        extraRows += 1
+    if showAvgSection
+        extraRows += 3  // Separator, labels, values
+    if showDominance
+        extraRows += 1
+    
+    int totalRows = offsetRows + baseRows + extraRows
+    
+    if na(widget)
+        widget := table.new(getWidgetPosition(widgetPosition), 3, totalRows, 
+             bgcolor=color.new(#0a0a0f, 5),
+             border_color=color.new(#2a2a3a, 0), 
+             border_width=1)
+        lastWidgetLocation := widgetPosition
+        lastTableSize := tableSize
+    
+    table.clear(widget, 0, 0, 2, totalRows - 1)
+    
+    txtSize = getTextSize(tableSize)
+    int row = tableOffset  // Start after offset rows
+    
+    // Fill offset rows with empty cells
+    for i = 0 to tableOffset - 1
+        table.cell(widget, 0, i, "", bgcolor=color.new(#0a0a0f, 100))
+        table.cell(widget, 1, i, "", bgcolor=color.new(#0a0a0f, 100))
+        table.cell(widget, 2, i, "", bgcolor=color.new(#0a0a0f, 100))
+    
+    // === HEADER ===
+    table.merge_cells(widget, 0, row, 2, row)
+    string tfDisplay = useCustomTf ? " (" + customTf + ")" : ""
+    table.cell(widget, 0, row, "Volume Analysis" + tfDisplay, 
+         text_color=volumeSellColor, text_size=txtSize, bgcolor=color.new(#1a1a2e, 0))
+    row += 1
+    
+    // === CURRENT VOLUME HEADER ===
+    table.merge_cells(widget, 0, row, 2, row)
+    table.cell(widget, 0, row, "Current Volume", 
+         text_color=color.white, text_size=txtSize, bgcolor=color.new(#1a1a2e, 0))
+    row += 1
+    
+    // === BUY / SELL LABELS ===
+    table.cell(widget, 0, row, "Buy", text_color=volumeBuyColor, text_size=txtSize, bgcolor=color.new(#0d2830, 0))
+    table.cell(widget, 1, row, "Sell", text_color=volumeSellColor, text_size=txtSize, bgcolor=color.new(#2d1530, 0))
+    if showDominance
+        string domText = dominantSide == 1 ? "▲" : (dominantSide == -1 ? "▼" : "◆")
+        color domCol = dominantSide == 1 ? volumeBuyColor : (dominantSide == -1 ? volumeSellColor : color.gray)
+        table.cell(widget, 2, row, domText, text_color=domCol, text_size=txtSize, bgcolor=color.new(#1a1a2e, 0))
+    else
+        table.cell(widget, 2, row, "", bgcolor=color.new(#1a1a2e, 0))
+    row += 1
+    
+    // === RAW VOLUME VALUES ===
+    string buyVolText = lowConfidence ? "—" : formatVolume(rawBuyVol)
+    string sellVolText = lowConfidence ? "—" : formatVolume(rawSellVol)
+    table.cell(widget, 0, row, buyVolText, text_color=color.white, text_size=txtSize, bgcolor=color.new(#0d2830, 0))
+    table.cell(widget, 1, row, sellVolText, text_color=color.white, text_size=txtSize, bgcolor=color.new(#2d1530, 0))
+    table.cell(widget, 2, row, "", bgcolor=color.new(#1a1a2e, 0))
+    row += 1
+    
+    // === PERCENTAGES ===
+    string buyPctText = lowConfidence ? "—" : str.tostring(round2(smoothedBuyPct)) + "%"
+    string sellPctText = lowConfidence ? "—" : str.tostring(round2(smoothedSellPct)) + "%"
+    table.cell(widget, 0, row, buyPctText, text_color=volumeBuyColor, text_size=txtSize, bgcolor=color.new(#0d2830, 0))
+    table.cell(widget, 1, row, sellPctText, text_color=volumeSellColor, text_size=txtSize, bgcolor=color.new(#2d1530, 0))
+    table.cell(widget, 2, row, "", bgcolor=color.new(#1a1a2e, 0))
+    row += 1
+    
+    // === NET FLOW ===
+    if showNetFlow
+        color netCol = rawNetFlow > 0 ? volumeBuyColor : (rawNetFlow < 0 ? volumeSellColor : color.gray)
+        string netPrefix = rawNetFlow > 0 ? "+" : (rawNetFlow < 0 ? "-" : "")
+        string netDisplay = lowConfidence ? "Net: —" : "Net: " + netPrefix + formatVolume(math.abs(rawNetFlow))
+        table.merge_cells(widget, 0, row, 2, row)
+        table.cell(widget, 0, row, netDisplay, text_color=netCol, text_size=txtSize, bgcolor=color.new(#1a1a2e, 0))
+        row += 1
+    
+    // === AVERAGE SECTION ===
+    if showAvgSection
+        // Separator with avg total
+        string avgTotalText = "Avg: " + formatVolume(avgTotal)
+        table.merge_cells(widget, 0, row, 2, row)
+        table.cell(widget, 0, row, avgTotalText, text_color=color.gray, text_size=txtSize, bgcolor=color.new(#0f0f1a, 0))
+        row += 1
+        
+        // Avg Buy / Avg Sell labels
+        table.cell(widget, 0, row, "Avg Buy", text_color=volumeBuyColor, text_size=txtSize, bgcolor=color.new(#0d2830, 0))
+        table.merge_cells(widget, 1, row, 2, row)
+        table.cell(widget, 1, row, "Avg Sell", text_color=volumeSellColor, text_size=txtSize, bgcolor=color.new(#2d1530, 0))
+        row += 1
+        
+        // Avg values
+        table.cell(widget, 0, row, formatVolume(avgBuyVol), text_color=color.white, text_size=txtSize, bgcolor=color.new(#0d2830, 0))
+        table.merge_cells(widget, 1, row, 2, row)
+        table.cell(widget, 1, row, formatVolume(avgSellVol), text_color=color.white, text_size=txtSize, bgcolor=color.new(#2d1530, 0))
+        row += 1
+
+    // === DOMINANCE ROW ===
+    if showDominance
+        string domStatus = dominantSide == 1 ? "BUYERS DOMINANT" : (dominantSide == -1 ? "SELLERS DOMINANT" : "NEUTRAL")
+        color domStatusCol = dominantSide == 1 ? volumeBuyColor : (dominantSide == -1 ? volumeSellColor : color.gray)
+        table.merge_cells(widget, 0, row, 2, row)
+        table.cell(widget, 0, row, domStatus, text_color=domStatusCol, text_size=txtSize, bgcolor=color.new(#1a1a2e, 0))
+        row += 1
+
+// === PLOT INVISIBLE (required for overlay indicator) ===
+plot(na, display=display.none)
