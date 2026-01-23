@@ -190,6 +190,8 @@ showVolLabel = input.bool(true, "Show Volume Labels", group="Visuals")
 showDashboard = input.bool(true, "Show Dashboard", group="Visuals")
 dashboardLocation = input.string("Top Right", "Dashboard Location", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Visuals",
      tooltip="Position of the dashboard on the chart")
+dashboardTransparency = input.int(10, "Dashboard Transparency", minval=0, maxval=90, step=5, group="Visuals",
+     tooltip="Background transparency of the dashboard (0 = solid, 90 = nearly invisible)")
 showCornerAccents = input.bool(true, "Corner Accents (Strong Blocks)", group="Visuals", tooltip="Display elegant corner markers on strong order blocks")
 fillAlpha = input.int(75, "Fill Transparency", minval=50, maxval=95, group="Visuals")
 
@@ -701,20 +703,20 @@ renderDashboardRow(table tbl, int row, OrderBlock b, string dirLabel, color dirC
     int nextRow = row
     // Render regardless of distance; negative means price is beyond the zone
     if row <= 7  // Leave rows 8-9 for Power
-        table.cell(tbl, 0, row, dirLabel, text_color=dirCol, text_size=size.small)
-        table.cell(tbl, 1, row, formatVolume(b.totalVolume), text_color=dirCol, text_size=size.small)
-        table.cell(tbl, 2, row, str.tostring(round2(dist)) + "%", text_color=color.white, text_size=size.small)
+        table.cell(tbl, 0, row, dirLabel, text_color=dirCol, text_size=size.small, width=0)
+        table.cell(tbl, 1, row, formatVolume(b.totalVolume), text_color=dirCol, text_size=size.small, width=0)
+        table.cell(tbl, 2, row, str.tostring(round2(dist)) + "%", text_color=color.white, text_size=size.small, width=0)
 
         color strengthCol = b.strength == "Elite" ? color.yellow : b.strength == "Strong" ? dirCol : b.strength == "Mid" ? color.orange : color.gray
-        table.cell(tbl, 3, row, b.strength, text_color=strengthCol, text_size=size.small)
-        table.cell(tbl, 4, row, str.tostring(b.retestCount), text_color=color.white, text_size=size.small)
+        table.cell(tbl, 3, row, b.strength, text_color=strengthCol, text_size=size.small, width=0)
+        table.cell(tbl, 4, row, str.tostring(b.retestCount), text_color=color.white, text_size=size.small, width=0)
 
         // Check if price is currently in zone
         bool currentlyInZone = low <= b.top and high >= b.bot
         string status = b.rejected ? rejectedLabel : (b.retestCount > 0 ? (currentlyInZone ? "ACTIVE" : "TESTED") : "FRESH")
         color statusCol = b.rejected ? dirCol : (currentlyInZone ? color.yellow : (b.retestCount > 0 ? color.orange : color.white))
-        table.cell(tbl, 5, row, status, text_color=statusCol, text_size=size.small)
-        table.cell(tbl, 6, row, str.tostring(round1(b.relativeVol)) + "x", text_color=color.white, text_size=size.small)
+        table.cell(tbl, 5, row, status, text_color=statusCol, text_size=size.small, width=0)
+        table.cell(tbl, 6, row, str.tostring(round1(b.relativeVol)) + "x", text_color=color.white, text_size=size.small, width=0)
         nextRow := row + 1
     nextRow
 
@@ -739,6 +741,7 @@ var bslLevels = array.new<LiquiditySweep>()  // Buy-side liquidity (above price)
 var sslLevels = array.new<LiquiditySweep>()  // Sell-side liquidity (below price)
 var table dashboard = na
 var string lastDashboardLocation = na  // Track location for table recreation
+var int lastDashboardTransparency = na  // Track transparency for table recreation
 
 // Market context (no var needed - recalculated each bar)
 float atr = ta.atr(14)
@@ -2111,16 +2114,19 @@ getDashboardPosition(string loc) =>
     loc == "Top Left" ? position.top_left : loc == "Bottom Right" ? position.bottom_right : loc == "Bottom Left" ? position.bottom_left : position.top_right
 
 if showDashboard and barstate.islast
-    // Check if location changed - need to recreate table
-    if not na(lastDashboardLocation) and dashboardLocation != lastDashboardLocation
+    // Check if location or transparency changed - need to recreate table
+    bool settingsChanged = (not na(lastDashboardLocation) and dashboardLocation != lastDashboardLocation) or
+                           (not na(lastDashboardTransparency) and dashboardTransparency != lastDashboardTransparency)
+    if settingsChanged
         if not na(dashboard)
             table.delete(dashboard)
             dashboard := na
     
     if na(dashboard)
-        dashboard := table.new(getDashboardPosition(dashboardLocation), 7, 10, bgcolor=color.new(#000000, 10),
+        dashboard := table.new(getDashboardPosition(dashboardLocation), 7, 10, bgcolor=color.new(#000000, dashboardTransparency),
              border_color=color.new(color.white, 70), border_width=1)
         lastDashboardLocation := dashboardLocation
+        lastDashboardTransparency := dashboardTransparency
     
     table.clear(dashboard, 0, 0, 6, 9)
     
@@ -2132,14 +2138,14 @@ if showDashboard and barstate.islast
     string headerText = presetDisplay + " | " + modeTag + confirmTag
     table.cell(dashboard, 0, 0, headerText, text_color=color.white, text_size=size.normal)
     
-    // Column headers
-    table.cell(dashboard, 0, 1, "Type", text_color=color.gray, text_size=size.small)
-    table.cell(dashboard, 1, 1, "Volume", text_color=color.gray, text_size=size.small)
-    table.cell(dashboard, 2, 1, "Dist%", text_color=color.gray, text_size=size.small)
-    table.cell(dashboard, 3, 1, "Strength", text_color=color.gray, text_size=size.small)
-    table.cell(dashboard, 4, 1, "Tests", text_color=color.gray, text_size=size.small)
-    table.cell(dashboard, 5, 1, "Status", text_color=color.gray, text_size=size.small)
-    table.cell(dashboard, 6, 1, "Vol", text_color=color.gray, text_size=size.small)
+    // Column headers (width=0 auto-fits to content)
+    table.cell(dashboard, 0, 1, "Type", text_color=color.gray, text_size=size.small, width=0)
+    table.cell(dashboard, 1, 1, "Volume", text_color=color.gray, text_size=size.small, width=0)
+    table.cell(dashboard, 2, 1, "Dist%", text_color=color.gray, text_size=size.small, width=0)
+    table.cell(dashboard, 3, 1, "Strength", text_color=color.gray, text_size=size.small, width=0)
+    table.cell(dashboard, 4, 1, "Tests", text_color=color.gray, text_size=size.small, width=0)
+    table.cell(dashboard, 5, 1, "Status", text_color=color.gray, text_size=size.small, width=0)
+    table.cell(dashboard, 6, 1, "Vol", text_color=color.gray, text_size=size.small, width=0)
     
     int row = 2
     row := renderDashboardBlocks(dashboard, row, bearBlocks, false)
@@ -2152,41 +2158,47 @@ if showDashboard and barstate.islast
         int sslCount = array.size(sslLevels)
         if bslCount > 0 or sslCount > 0
             if row <= 7  // Leave rows 8-9 for Power
-                table.cell(dashboard, 0, row, "─── LIQUIDITY ───", text_color=color.gray, text_size=size.small)
+                table.cell(dashboard, 0, row, "LIQUIDITY", text_color=color.gray, text_size=size.small, width=0)
                 row += 1
             
             // Show nearest BSL
             if bslCount > 0 and row <= 7  // Leave rows 8-9 for Power
                 LiquiditySweep nearestBSL = array.get(bslLevels, 0)
-                float bslDist = (nearestBSL.level - close) / close * 100
-                for i = 1 to bslCount - 1
+                float bslDist = 999999.0  // Start with sentinel value
+                bool foundValidBSL = false
+                for i = 0 to bslCount - 1
                     LiquiditySweep sweep = array.get(bslLevels, i)
-                    float dist = (sweep.level - close) / close * 100
-                    if not sweep.swept and not sweep.ranThrough and dist < bslDist and dist > 0
-                        nearestBSL := sweep
-                        bslDist := dist
+                    if not sweep.swept and not sweep.ranThrough
+                        float dist = (sweep.level - close) / close * 100
+                        if dist > 0 and dist < bslDist
+                            nearestBSL := sweep
+                            bslDist := dist
+                            foundValidBSL := true
                 
-                if not nearestBSL.swept and not nearestBSL.ranThrough
+                if foundValidBSL
                     string bslStatus = nearestBSL.isEqual ? "EQ BSL" : "BSL"
-                    table.cell(dashboard, 0, row, bslStatus + " ▲", text_color=color.new(#00bfff, 0), text_size=size.small)
-                    table.cell(dashboard, 1, row, str.tostring(round2(bslDist)) + "%", text_color=color.white, text_size=size.small)
+                    table.cell(dashboard, 0, row, bslStatus + " ▲", text_color=color.new(#00bfff, 0), text_size=size.small, width=0)
+                    table.cell(dashboard, 1, row, str.tostring(round2(bslDist)) + "%", text_color=color.white, text_size=size.small, width=0)
                     row += 1
             
             // Show nearest SSL
             if sslCount > 0 and row <= 7  // Leave rows 8-9 for Power
                 LiquiditySweep nearestSSL = array.get(sslLevels, 0)
-                float sslDist = (close - nearestSSL.level) / close * 100
-                for i = 1 to sslCount - 1
+                float sslDist = 999999.0  // Start with sentinel value
+                bool foundValidSSL = false
+                for i = 0 to sslCount - 1
                     LiquiditySweep sweep = array.get(sslLevels, i)
-                    float dist = (close - sweep.level) / close * 100
-                    if not sweep.swept and not sweep.ranThrough and dist < sslDist and dist > 0
-                        nearestSSL := sweep
-                        sslDist := dist
+                    if not sweep.swept and not sweep.ranThrough
+                        float dist = (close - sweep.level) / close * 100
+                        if dist > 0 and dist < sslDist
+                            nearestSSL := sweep
+                            sslDist := dist
+                            foundValidSSL := true
                 
-                if not nearestSSL.swept and not nearestSSL.ranThrough
+                if foundValidSSL
                     string sslStatus = nearestSSL.isEqual ? "EQ SSL" : "SSL"
-                    table.cell(dashboard, 0, row, sslStatus + " ▼", text_color=color.new(#ff6600, 0), text_size=size.small)
-                    table.cell(dashboard, 1, row, str.tostring(round2(sslDist)) + "%", text_color=color.white, text_size=size.small)
+                    table.cell(dashboard, 0, row, sslStatus + " ▼", text_color=color.new(#ff6600, 0), text_size=size.small, width=0)
+                    table.cell(dashboard, 1, row, str.tostring(round2(sslDist)) + "%", text_color=color.white, text_size=size.small, width=0)
                     row += 1
     
     // === POWER ROW (Intrabar Volume Dominance) - Always at bottom ===
@@ -2201,14 +2213,14 @@ if showDashboard and barstate.islast
              effectivePowerLtf == "240" ? "@4h" : "@" + effectivePowerLtf
         
         // Separator line with LTF indicator
-        string powerHeader = "─── POWER " + ltfDisplay + " ───"
-        table.cell(dashboard, 0, powerSepRow, powerHeader, text_color=color.gray, text_size=size.small)
-        table.cell(dashboard, 1, powerSepRow, "", text_size=size.small)
-        table.cell(dashboard, 2, powerSepRow, "", text_size=size.small)
-        table.cell(dashboard, 3, powerSepRow, "", text_size=size.small)
-        table.cell(dashboard, 4, powerSepRow, "", text_size=size.small)
-        table.cell(dashboard, 5, powerSepRow, "", text_size=size.small)
-        table.cell(dashboard, 6, powerSepRow, "", text_size=size.small)
+        string powerHeader = "POWER " + ltfDisplay
+        table.cell(dashboard, 0, powerSepRow, powerHeader, text_color=color.gray, text_size=size.small, width=0)
+        table.cell(dashboard, 1, powerSepRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 2, powerSepRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 3, powerSepRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 4, powerSepRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 5, powerSepRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 6, powerSepRow, "", text_size=size.small, width=0)
         
         // Select display values based on signal timing mode
         // Confirmed mode uses latched values (stable, no intrabar flicker)
@@ -2229,22 +2241,22 @@ if showDashboard and barstate.islast
         
         // Column 0: "Power" label with mode indicator
         string modeIndicator = powerMode == "Auto" ? "Power" : "Power*"
-        table.cell(dashboard, 0, powerDataRow, modeIndicator, text_color=color.white, text_size=size.small)
+        table.cell(dashboard, 0, powerDataRow, modeIndicator, text_color=color.white, text_size=size.small, width=0)
         // Column 1: BUY/SELL/NEUTRAL (colored)
-        table.cell(dashboard, 1, powerDataRow, sideText, text_color=sideCol, text_size=size.small)
+        table.cell(dashboard, 1, powerDataRow, sideText, text_color=sideCol, text_size=size.small, width=0)
         // Column 2: Percentage (colored to match side)
         string pctText = displayLowConf ? "—" : (str.tostring(round1(displayPct)) + "%")
-        table.cell(dashboard, 2, powerDataRow, pctText, text_color=pctCol, text_size=size.small)
+        table.cell(dashboard, 2, powerDataRow, pctText, text_color=pctCol, text_size=size.small, width=0)
         // Column 3: Intrabar count (confidence indicator)
         string confText = str.tostring(displayIntrabarCount) + " bars"
         color confCol = displayLowConf ? color.orange : color.gray
-        table.cell(dashboard, 3, powerDataRow, confText, text_color=confCol, text_size=size.small)
+        table.cell(dashboard, 3, powerDataRow, confText, text_color=confCol, text_size=size.small, width=0)
         // Column 4: Show confirmation status (optional debug info)
         string confirmStatus = flipConfirmCount > 0 ? "(" + str.tostring(flipConfirmCount) + ")" : ""
-        table.cell(dashboard, 4, powerDataRow, confirmStatus, text_color=color.gray, text_size=size.small)
+        table.cell(dashboard, 4, powerDataRow, confirmStatus, text_color=color.gray, text_size=size.small, width=0)
         // Columns 5-6: blank
-        table.cell(dashboard, 5, powerDataRow, "", text_size=size.small)
-        table.cell(dashboard, 6, powerDataRow, "", text_size=size.small)
+        table.cell(dashboard, 5, powerDataRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 6, powerDataRow, "", text_size=size.small, width=0)
 
 // === ALERTS ===
 // Note: alertcondition must be at global scope
