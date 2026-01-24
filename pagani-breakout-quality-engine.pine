@@ -1,0 +1,595 @@
+//@version=6
+indicator("Pagani Breakout Quality Engine (BQE)", overlay=true, max_labels_count=200, max_lines_count=200)
+
+groupPreset = "Presets"
+presetMode = input.string("Balanced", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
+     tooltip="Institutional: fewer, higher-quality confirmations (best for low-liquidity alts).\nBalanced: default.\nAggressive: more attempts/triggers.\nManual: use inputs as-is.")
+
+groupLevels = "Levels"
+fastModeInput = input.bool(false, "Fast Mode (Skip Touch Scan)", group=groupLevels,
+     tooltip="Performance mode. Skips multi-touch counting loops and treats HTF levels (PDH/PDL, PWH/PWL, H1 pivots) as valid without touch scoring.\nRecommended on low timeframes with many symbols or large lookbacks.")
+usePdhPdlInput = input.bool(true, "Use PDH/PDL (UTC)", group=groupLevels)
+usePwhPwlInput = input.bool(true, "Use PWH/PWL (UTC)", group=groupLevels)
+useH1PivotsInput = input.bool(true, "Use 1H Pivots", group=groupLevels)
+pivotLeftInput = input.int(3, "1H Pivot Left", minval=1, maxval=20, group=groupLevels)
+pivotRightInput = input.int(3, "1H Pivot Right", minval=1, maxval=20, group=groupLevels)
+
+touchLookbackInput = input.int(200, "Touch Lookback (bars)", minval=20, maxval=2000, group=groupLevels)
+touchTolAtrInput = input.float(0.15, "Touch Tolerance (x ATR)", minval=0.0, maxval=2.0, step=0.05, group=groupLevels)
+minTouchesInput = input.int(3, "Min Touches", minval=1, maxval=10, group=groupLevels)
+
+groupSetup = "Setup (Compression + Near Level)"
+signalTimingInput = input.string("Confirmed (bar close)", "Signal Timing", options=["Confirmed (bar close)", "Realtime (intrabar)"], group=groupSetup)
+atrLenInput = input.int(14, "ATR Length", minval=1, group=groupSetup)
+bbwLenInput = input.int(20, "BB Length", minval=1, group=groupSetup)
+bbwStdevInput = input.float(2.0, "BB Stdev", minval=0.1, maxval=10.0, step=0.1, group=groupSetup)
+bbwPctLookbackInput = input.int(250, "BBW %Rank Lookback", minval=50, maxval=5000, group=groupSetup)
+bbwLowPctInput = input.float(20.0, "BBW Low %Rank", minval=1.0, maxval=60.0, step=1.0, group=groupSetup)
+atrPctLookbackInput = input.int(250, "ATR %Rank Lookback", minval=50, maxval=5000, group=groupSetup)
+atrLowPctInput = input.float(35.0, "ATR Low %Rank", minval=1.0, maxval=60.0, step=1.0, group=groupSetup)
+nearLevelAtrInput = input.float(1.0, "Near Level (x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupSetup)
+
+groupTrigger = "Trigger (Displacement)"
+closeBufferAtrInput = input.float(0.05, "Close Buffer (x ATR)", minval=0.0, maxval=2.0, step=0.01, group=groupTrigger)
+minTrAtrInput = input.float(1.25, "Min TR (x ATR)", minval=0.1, maxval=10.0, step=0.05, group=groupTrigger)
+minCloseLocInput = input.float(0.80, "Min Close Location", minval=0.5, maxval=1.0, step=0.01, group=groupTrigger,
+     tooltip="Close location inside the candle range. 0.80 means close in the top 20% (for longs).")
+
+groupConfirm = "Confirmation (Acceptance / Retest)"
+entryModeInput = input.string("Both", "Entry Mode", options=["Acceptance (close)", "Retest-hold", "Both"], group=groupConfirm,
+     tooltip="Acceptance (close): signal on accepted breakout close.\nRetest-hold: signal only after retest holds (filters more noise on low-liquidity alts).\nBoth: show both events.")
+acceptBarsInput = input.int(2, "Acceptance Closes", minval=1, maxval=5, group=groupConfirm)
+acceptMaxBarsInput = input.int(5, "Max Bars To Accept", minval=1, maxval=50, group=groupConfirm)
+retestTolAtrInput = input.float(0.25, "Retest Tolerance (x ATR)", minval=0.0, maxval=3.0, step=0.05, group=groupConfirm)
+retestMaxBarsInput = input.int(12, "Max Bars To Retest", minval=1, maxval=200, group=groupConfirm)
+
+groupSweep = "Failures (Sweeps / Reclaims)"
+sweepMinExcAtrInput = input.float(0.20, "Min Sweep Excursion (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupSweep)
+failWindowBarsInput = input.int(3, "Fail Window (bars)", minval=1, maxval=50, group=groupSweep)
+
+groupRegime = "Regime (Low-Liquidity Guardrails)"
+useRegimeInput = input.bool(true, "Enable Active-Market Filter", group=groupRegime)
+regimeLookbackInput = input.int(250, "Regime %Rank Lookback", minval=50, maxval=5000, group=groupRegime)
+activeTrPctInput = input.float(60.0, "Active TR/ATR %Rank", minval=1.0, maxval=99.0, step=1.0, group=groupRegime)
+activeDvolPctInput = input.float(55.0, "Active $Vol %Rank", minval=1.0, maxval=99.0, step=1.0, group=groupRegime)
+
+groupVis = "Visuals"
+showLevelsInput = input.bool(true, "Show Key Levels", group=groupVis)
+showActiveLevelInput = input.bool(true, "Show Active Level", group=groupVis)
+showScoreLabelsInput = input.bool(true, "Show Score Labels", group=groupVis)
+showStateMarkersInput = input.bool(true, "Show State Markers", group=groupVis)
+
+groupAlerts = "Alerts"
+alertSetupInput = input.bool(true, "Alert: Setup Armed", group=groupAlerts)
+alertAcceptedInput = input.bool(true, "Alert: Breakout Accepted", group=groupAlerts)
+alertRetestHeldInput = input.bool(true, "Alert: Retest Held", group=groupAlerts)
+alertSweepInput = input.bool(true, "Alert: Sweep / Failed", group=groupAlerts)
+
+color bullCol = #00ff88
+color bearCol = #ff3366
+color lvlCol = color.new(color.gray, 40)
+color activeLvlCol = color.new(color.yellow, 0)
+
+bool shouldUpdate = signalTimingInput == "Realtime (intrabar)" or barstate.isconfirmed
+
+// Preset-derived parameters (used across scoring + state machine)
+int cooldownBars = presetMode == "Institutional (Strict)" ? 30 : presetMode == "Aggressive" ? 10 : 20
+string entryMode = presetMode == "Institutional (Strict)" ? "Retest-hold" : presetMode == "Aggressive" ? "Acceptance (close)" : entryModeInput
+float closeBufferAtr = presetMode == "Institutional (Strict)" ? math.max(closeBufferAtrInput, 0.08) : presetMode == "Aggressive" ? math.min(closeBufferAtrInput, 0.03) : closeBufferAtrInput
+float minTrAtr = presetMode == "Institutional (Strict)" ? math.max(minTrAtrInput, 1.5) : presetMode == "Aggressive" ? math.min(minTrAtrInput, 1.1) : minTrAtrInput
+float minCloseLoc = presetMode == "Institutional (Strict)" ? math.max(minCloseLocInput, 0.85) : presetMode == "Aggressive" ? math.min(minCloseLocInput, 0.75) : minCloseLocInput
+int acceptBars = presetMode == "Institutional (Strict)" ? math.max(acceptBarsInput, 2) : presetMode == "Aggressive" ? 1 : acceptBarsInput
+int acceptMaxBars = presetMode == "Institutional (Strict)" ? math.min(acceptMaxBarsInput, 4) : presetMode == "Aggressive" ? math.max(acceptMaxBarsInput, 8) : acceptMaxBarsInput
+float sweepMinExcAtr = presetMode == "Institutional (Strict)" ? math.max(sweepMinExcAtrInput, 0.35) : presetMode == "Aggressive" ? math.min(sweepMinExcAtrInput, 0.10) : sweepMinExcAtrInput
+int failWindowBars = presetMode == "Institutional (Strict)" ? math.min(failWindowBarsInput, 3) : presetMode == "Aggressive" ? math.max(failWindowBarsInput, 5) : failWindowBarsInput
+
+bool wantAcceptSignal = entryMode == "Acceptance (close)" or entryMode == "Both"
+bool wantRetestSignal = entryMode == "Retest-hold" or entryMode == "Both"
+bool watchRetest = wantRetestSignal
+
+// --- Core features
+float atr = ta.atr(atrLenInput)
+float tr = ta.tr(true)
+float rng = high - low
+float closeLoc = rng > 0 ? (close - low) / rng : 0.5
+float body = math.abs(close - open)
+float bodyPct = rng > 0 ? body / rng : 0.0
+
+float basis = ta.sma(close, bbwLenInput)
+float dev = bbwStdevInput * ta.stdev(close, bbwLenInput)
+float bbUpper = basis + dev
+float bbLower = basis - dev
+float bbw = basis != 0 ? (bbUpper - bbLower) / basis : na
+
+float bbwPctRank = ta.percentrank(bbw, bbwPctLookbackInput)
+float atrPctRank = ta.percentrank(atr, atrPctLookbackInput)
+
+bool squeeze = not na(bbwPctRank) and not na(atrPctRank) and bbwPctRank <= bbwLowPctInput and atrPctRank <= atrLowPctInput
+
+// Active-market regime (percentile-based; robust across alts)
+float trAtr = (not na(atr) and atr > 0) ? tr / atr : na
+float trAtrPctRank = ta.percentrank(trAtr, regimeLookbackInput)
+float dvol = volume * close
+float dvolPctRank = ta.percentrank(dvol, regimeLookbackInput)
+bool activeMarket = not useRegimeInput or ((not na(trAtrPctRank) and trAtrPctRank >= activeTrPctInput) or (not na(dvolPctRank) and dvolPctRank >= activeDvolPctInput))
+
+// --- UTC-anchored PDH/PDL and PWH/PWL
+int yUtc = year(time, "UTC")
+int mUtc = month(time, "UTC")
+int dUtc = dayofmonth(time, "UTC")
+int wUtc = weekofyear(time, "UTC")
+int dayId = yUtc * 10000 + mUtc * 100 + dUtc
+int weekId = yUtc * 100 + wUtc
+
+var int lastDayId = na
+var int lastWeekId = na
+
+var float dayHigh = na
+var float dayLow = na
+var float pdh = na
+var float pdl = na
+
+var float weekHigh = na
+var float weekLow = na
+var float pwh = na
+var float pwl = na
+
+bool newDay = not na(lastDayId) and dayId != lastDayId
+bool newWeek = not na(lastWeekId) and weekId != lastWeekId
+
+if na(lastDayId)
+    lastDayId := dayId
+    dayHigh := high
+    dayLow := low
+else if newDay
+    pdh := dayHigh
+    pdl := dayLow
+    dayHigh := high
+    dayLow := low
+    lastDayId := dayId
+else
+    dayHigh := math.max(dayHigh, high)
+    dayLow := math.min(dayLow, low)
+
+if na(lastWeekId)
+    lastWeekId := weekId
+    weekHigh := high
+    weekLow := low
+else if newWeek
+    pwh := weekHigh
+    pwl := weekLow
+    weekHigh := high
+    weekLow := low
+    lastWeekId := weekId
+else
+    weekHigh := math.max(weekHigh, high)
+    weekLow := math.min(weekLow, low)
+
+// UTC daily VWAP (resets at 00:00 UTC)
+var float vwapPv = na
+var float vwapV = na
+if na(vwapPv)
+    vwapPv := hlc3 * volume
+    vwapV := volume
+else if newDay
+    vwapPv := hlc3 * volume
+    vwapV := volume
+else
+    vwapPv += hlc3 * volume
+    vwapV += volume
+float vwapUtc = (not na(vwapV) and vwapV > 0) ? vwapPv / vwapV : na
+
+// --- 1H pivots (non-repainting)
+int pivotLeft = presetMode == "Aggressive" ? math.max(pivotLeftInput - 1, 1) : presetMode == "Institutional (Strict)" ? math.max(pivotLeftInput, 4) : pivotLeftInput
+int pivotRight = presetMode == "Aggressive" ? math.max(pivotRightInput - 1, 1) : presetMode == "Institutional (Strict)" ? math.max(pivotRightInput, 4) : pivotRightInput
+
+float ph1h = useH1PivotsInput ? request.security(syminfo.tickerid, "60", ta.pivothigh(high, pivotLeft, pivotRight), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : na
+float pl1h = useH1PivotsInput ? request.security(syminfo.tickerid, "60", ta.pivotlow(low, pivotLeft, pivotRight), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : na
+
+var float lastPh1h = na
+var float lastPl1h = na
+if not na(ph1h)
+    lastPh1h := ph1h
+if not na(pl1h)
+    lastPl1h := pl1h
+
+// --- Candidate level selection (nearest above for long, nearest below for short)
+float bestLongDist = na
+float bestShortDist = na
+float longLvl = na
+float shortLvl = na
+string longLvlName = ""
+string shortLvlName = ""
+int longLvlTier = 0
+int shortLvlTier = 0
+
+if usePdhPdlInput and not na(pdh)
+    float dist = pdh - close
+    if dist > 0 and (na(bestLongDist) or dist < bestLongDist)
+        bestLongDist := dist
+        longLvl := pdh
+        longLvlName := "PDH"
+        longLvlTier := 3
+if usePdhPdlInput and not na(pdl)
+    float dist = close - pdl
+    if dist > 0 and (na(bestShortDist) or dist < bestShortDist)
+        bestShortDist := dist
+        shortLvl := pdl
+        shortLvlName := "PDL"
+        shortLvlTier := 3
+
+if usePwhPwlInput and not na(pwh)
+    float dist = pwh - close
+    if dist > 0 and (na(bestLongDist) or dist < bestLongDist)
+        bestLongDist := dist
+        longLvl := pwh
+        longLvlName := "PWH"
+        longLvlTier := 3
+if usePwhPwlInput and not na(pwl)
+    float dist = close - pwl
+    if dist > 0 and (na(bestShortDist) or dist < bestShortDist)
+        bestShortDist := dist
+        shortLvl := pwl
+        shortLvlName := "PWL"
+        shortLvlTier := 3
+
+if useH1PivotsInput and not na(lastPh1h)
+    float dist = lastPh1h - close
+    if dist > 0 and (na(bestLongDist) or dist < bestLongDist)
+        bestLongDist := dist
+        longLvl := lastPh1h
+        longLvlName := "H1 Pivot"
+        longLvlTier := 2
+if useH1PivotsInput and not na(lastPl1h)
+    float dist = close - lastPl1h
+    if dist > 0 and (na(bestShortDist) or dist < bestShortDist)
+        bestShortDist := dist
+        shortLvl := lastPl1h
+        shortLvlName := "H1 Pivot"
+        shortLvlTier := 2
+
+float nearDist = nearLevelAtrInput * atr
+bool nearLong = not na(longLvl) and not na(nearDist) and bestLongDist <= nearDist
+bool nearShort = not na(shortLvl) and not na(nearDist) and bestShortDist <= nearDist
+
+// Touch count (for the selected level only)
+int touchesToScore(float lvl, bool isLong) =>
+    int touches = 0
+    float tol = touchTolAtrInput * atr
+    if not na(lvl) and not na(tol)
+        for i = 0 to touchLookbackInput - 1
+            bool hit = isLong ? math.abs(high[i] - lvl) <= tol : math.abs(low[i] - lvl) <= tol
+            if hit
+                touches += 1
+    touches
+
+bool touchScanLong = not fastModeInput and nearLong and longLvlTier < 3 and shouldUpdate and squeeze and activeMarket
+bool touchScanShort = not fastModeInput and nearShort and shortLvlTier < 3 and shouldUpdate and squeeze and activeMarket
+
+int longTouches = touchScanLong ? touchesToScore(longLvl, true) : 0
+int shortTouches = touchScanShort ? touchesToScore(shortLvl, false) : 0
+
+bool longLevelOk = nearLong and (longLvlTier >= 3 or fastModeInput or longTouches >= minTouchesInput)
+bool shortLevelOk = nearShort and (shortLvlTier >= 3 or fastModeInput or shortTouches >= minTouchesInput)
+
+// --- Component scores (0..100 total)
+float scoreLevel(int tier, int touches) =>
+    float base = tier >= 3 ? 18 : tier == 2 ? 12 : 6
+    float bonus = fastModeInput ? 0 : (touches >= 5 ? 7 : touches >= 3 ? 4 : touches >= 2 ? 2 : 0)
+    math.min(base + bonus, 25)
+
+float scoreCompression() =>
+    float s1 = not na(bbwPctRank) ? (bbwPctRank <= bbwLowPctInput ? 10 : bbwPctRank <= bbwLowPctInput * 2.0 ? 5 : 0) : 0
+    float s2 = not na(atrPctRank) ? (atrPctRank <= atrLowPctInput ? 10 : atrPctRank <= atrLowPctInput * 1.5 ? 5 : 0) : 0
+    math.min(s1 + s2, 20)
+
+float scoreDisplacement(bool isLong) =>
+    float trScore = (not na(atr) and atr > 0 and tr >= minTrAtr * atr) ? 15 : (not na(atr) and atr > 0 and tr >= (minTrAtr * 0.9) * atr) ? 8 : 0
+    float loc = isLong ? closeLoc : (1.0 - closeLoc)
+    float locScore = loc >= minCloseLoc ? 10 : loc >= (minCloseLoc - 0.10) ? 5 : 0
+    math.min(trScore + locScore, 25)
+
+float scoreParticipation(bool isLong) =>
+    float vScore = (not na(dvolPctRank) and dvolPctRank >= activeDvolPctInput) ? 10 : 0
+    float vwapScore = not na(vwapUtc) ? (isLong ? (close >= vwapUtc ? 10 : 0) : (close <= vwapUtc ? 10 : 0)) : 0
+    math.min(vScore + vwapScore, 20)
+
+float lvlScoreLong = longLevelOk ? scoreLevel(longLvlTier, longTouches) : 0
+float lvlScoreShort = shortLevelOk ? scoreLevel(shortLvlTier, shortTouches) : 0
+float compScore = scoreCompression()
+float dispScoreLong = scoreDisplacement(true)
+float dispScoreShort = scoreDisplacement(false)
+float partScoreLong = scoreParticipation(true)
+float partScoreShort = scoreParticipation(false)
+
+// --- State machine (separate long/short)
+// 0 idle, 1 armed, 2 attempt, 3 accepted, 4 retest_watch, 5 retest_held, 6 failed, 7 cooldown
+var int longState = 0
+var int shortState = 0
+var int longStateBar = na
+var int shortStateBar = na
+var float longLvlRef = na
+var float shortLvlRef = na
+var string longLvlRefName = ""
+var string shortLvlRefName = ""
+var int longAcceptStreak = 0
+var int shortAcceptStreak = 0
+var int longCooldown = 0
+var int shortCooldown = 0
+var int longSweepStartBar = na
+var int shortSweepStartBar = na
+
+bool dispOkLong = not na(atr) and atr > 0 and tr >= minTrAtr * atr and closeLoc >= minCloseLoc
+bool dispOkShort = not na(atr) and atr > 0 and tr >= minTrAtr * atr and closeLoc <= (1.0 - minCloseLoc)
+
+bool setupLong = shouldUpdate and activeMarket and squeeze and longLevelOk
+bool setupShort = shouldUpdate and activeMarket and squeeze and shortLevelOk
+
+bool attemptLong(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close > lvl + closeBufferAtr * atr and dispOkLong
+bool attemptShort(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close < lvl - closeBufferAtr * atr and dispOkShort
+
+// Sweeps are tracked per state using `longSweepStartBar`/`shortSweepStartBar` + `failWindowBars`.
+
+// Events for alerts/markers
+bool evSetupLong = false
+bool evSetupShort = false
+bool evAcceptedLong = false
+bool evAcceptedShort = false
+bool evRetestLong = false
+bool evRetestShort = false
+bool evFailedLong = false
+bool evFailedShort = false
+bool evSweepLong = false
+bool evSweepShort = false
+
+float scoreLong = na
+float scoreShort = na
+
+scoreTotal(float lvlScore, float dispScore, float partScore, bool accepted, bool retestHeld) =>
+    float acc = accepted ? (retestHeld ? 10 : 7) : 0
+    math.min(lvlScore + compScore + dispScore + partScore + acc, 100)
+
+if longCooldown > 0
+    longCooldown -= 1
+    if longCooldown == 0
+        longState := 0
+
+if shortCooldown > 0
+    shortCooldown -= 1
+    if shortCooldown == 0
+        shortState := 0
+
+if longCooldown == 0
+    if longState == 0
+        if setupLong
+            longState := 1
+            longStateBar := bar_index
+            longLvlRef := longLvl
+            longLvlRefName := longLvlName
+            longAcceptStreak := 0
+            longSweepStartBar := na
+            evSetupLong := true
+    else if longState == 1
+        bool stale = not squeeze or na(longLvlRef) or (longLvlRef - close) > (nearLevelAtrInput * atr * 1.8)
+        if stale
+            longState := 0
+            longSweepStartBar := na
+        else
+            if na(longSweepStartBar) and not na(atr) and atr > 0 and high >= longLvlRef + sweepMinExcAtr * atr
+                longSweepStartBar := bar_index
+            bool sweepNow = not na(longSweepStartBar) and close < longLvlRef and (bar_index - longSweepStartBar) <= failWindowBars
+            if sweepNow
+                longState := 6
+                longStateBar := bar_index
+                evSweepLong := true
+                longSweepStartBar := na
+            else if attemptLong(longLvlRef)
+                longState := 2
+                longStateBar := bar_index
+                longAcceptStreak := 0
+                longSweepStartBar := na
+    else if longState == 2
+        bool acceptClose = close > longLvlRef + closeBufferAtr * atr
+        longAcceptStreak := acceptClose ? (longAcceptStreak + 1) : 0
+        bool timeOut = (bar_index - longStateBar) >= acceptMaxBars
+        bool reclaimed = close < longLvlRef
+        if na(longSweepStartBar) and not na(atr) and atr > 0 and high >= longLvlRef + sweepMinExcAtr * atr
+            longSweepStartBar := bar_index
+        bool sweepNow = reclaimed and not na(longSweepStartBar) and (bar_index - longSweepStartBar) <= failWindowBars
+        if sweepNow
+            longState := 6
+            longStateBar := bar_index
+            evSweepLong := true
+            longSweepStartBar := na
+        else if reclaimed
+            longState := 6
+            longStateBar := bar_index
+            evFailedLong := true
+            longSweepStartBar := na
+        else if longAcceptStreak >= acceptBars
+            longState := 3
+            longStateBar := bar_index
+            evAcceptedLong := true
+            longSweepStartBar := na
+        else if timeOut
+            longState := 6
+            longStateBar := bar_index
+            evFailedLong := true
+            longSweepStartBar := na
+    else if longState == 3
+        if watchRetest
+            longState := 4
+            longStateBar := bar_index
+        else
+            longState := 7
+            longCooldown := cooldownBars
+        longSweepStartBar := na
+    else if longState == 4
+        bool reclaimed = close < longLvlRef
+        bool timeOut = (bar_index - longStateBar) > retestMaxBarsInput
+        float tol = retestTolAtrInput * atr
+        bool touched = not na(tol) and low <= longLvlRef + tol
+        bool held = touched and close >= longLvlRef
+        if reclaimed
+            longState := 6
+            longStateBar := bar_index
+            evFailedLong := true
+        else if held
+            longState := 5
+            longStateBar := bar_index
+            evRetestLong := true
+        else if timeOut
+            longState := 7
+            longCooldown := cooldownBars
+    else if longState == 5
+        longState := 7
+        longCooldown := cooldownBars
+    else if longState == 6
+        longState := 7
+        longCooldown := cooldownBars
+
+if shortCooldown == 0
+    if shortState == 0
+        if setupShort
+            shortState := 1
+            shortStateBar := bar_index
+            shortLvlRef := shortLvl
+            shortLvlRefName := shortLvlName
+            shortAcceptStreak := 0
+            shortSweepStartBar := na
+            evSetupShort := true
+    else if shortState == 1
+        bool stale = not squeeze or na(shortLvlRef) or (close - shortLvlRef) > (nearLevelAtrInput * atr * 1.8)
+        if stale
+            shortState := 0
+            shortSweepStartBar := na
+        else
+            if na(shortSweepStartBar) and not na(atr) and atr > 0 and low <= shortLvlRef - sweepMinExcAtr * atr
+                shortSweepStartBar := bar_index
+            bool sweepNow = not na(shortSweepStartBar) and close > shortLvlRef and (bar_index - shortSweepStartBar) <= failWindowBars
+            if sweepNow
+                shortState := 6
+                shortStateBar := bar_index
+                evSweepShort := true
+                shortSweepStartBar := na
+            else if attemptShort(shortLvlRef)
+                shortState := 2
+                shortStateBar := bar_index
+                shortAcceptStreak := 0
+                shortSweepStartBar := na
+    else if shortState == 2
+        bool acceptClose = close < shortLvlRef - closeBufferAtr * atr
+        shortAcceptStreak := acceptClose ? (shortAcceptStreak + 1) : 0
+        bool timeOut = (bar_index - shortStateBar) >= acceptMaxBars
+        bool reclaimed = close > shortLvlRef
+        if na(shortSweepStartBar) and not na(atr) and atr > 0 and low <= shortLvlRef - sweepMinExcAtr * atr
+            shortSweepStartBar := bar_index
+        bool sweepNow = reclaimed and not na(shortSweepStartBar) and (bar_index - shortSweepStartBar) <= failWindowBars
+        if sweepNow
+            shortState := 6
+            shortStateBar := bar_index
+            evSweepShort := true
+            shortSweepStartBar := na
+        else if reclaimed
+            shortState := 6
+            shortStateBar := bar_index
+            evFailedShort := true
+            shortSweepStartBar := na
+        else if shortAcceptStreak >= acceptBars
+            shortState := 3
+            shortStateBar := bar_index
+            evAcceptedShort := true
+            shortSweepStartBar := na
+        else if timeOut
+            shortState := 6
+            shortStateBar := bar_index
+            evFailedShort := true
+            shortSweepStartBar := na
+    else if shortState == 3
+        if watchRetest
+            shortState := 4
+            shortStateBar := bar_index
+        else
+            shortState := 7
+            shortCooldown := cooldownBars
+        shortSweepStartBar := na
+    else if shortState == 4
+        bool reclaimed = close > shortLvlRef
+        bool timeOut = (bar_index - shortStateBar) > retestMaxBarsInput
+        float tol = retestTolAtrInput * atr
+        bool touched = not na(tol) and high >= shortLvlRef - tol
+        bool held = touched and close <= shortLvlRef
+        if reclaimed
+            shortState := 6
+            shortStateBar := bar_index
+            evFailedShort := true
+        else if held
+            shortState := 5
+            shortStateBar := bar_index
+            evRetestShort := true
+        else if timeOut
+            shortState := 7
+            shortCooldown := cooldownBars
+    else if shortState == 5
+        shortState := 7
+        shortCooldown := cooldownBars
+    else if shortState == 6
+        shortState := 7
+        shortCooldown := cooldownBars
+
+bool acceptedLongNow = longState == 3 or longState == 4 or longState == 5
+bool acceptedShortNow = shortState == 3 or shortState == 4 or shortState == 5
+bool retestLongNow = longState == 5
+bool retestShortNow = shortState == 5
+
+scoreLong := scoreTotal(lvlScoreLong, dispScoreLong, partScoreLong, acceptedLongNow, retestLongNow)
+scoreShort := scoreTotal(lvlScoreShort, dispScoreShort, partScoreShort, acceptedShortNow, retestShortNow)
+
+// --- Plot levels
+plot(showLevelsInput and usePdhPdlInput ? pdh : na, "PDH (UTC)", color=lvlCol, style=plot.style_linebr)
+plot(showLevelsInput and usePdhPdlInput ? pdl : na, "PDL (UTC)", color=lvlCol, style=plot.style_linebr)
+plot(showLevelsInput and usePwhPwlInput ? pwh : na, "PWH (UTC)", color=color.new(color.gray, 55), style=plot.style_linebr)
+plot(showLevelsInput and usePwhPwlInput ? pwl : na, "PWL (UTC)", color=color.new(color.gray, 55), style=plot.style_linebr)
+plot(showLevelsInput ? vwapUtc : na, "VWAP (UTC day)", color=color.new(color.blue, 30))
+
+plot(showActiveLevelInput and longState > 0 ? longLvlRef : na, "Active Long Level", color=activeLvlCol, style=plot.style_linebr, linewidth=2)
+plot(showActiveLevelInput and shortState > 0 ? shortLvlRef : na, "Active Short Level", color=activeLvlCol, style=plot.style_linebr, linewidth=2)
+
+plot(scoreLong, "BQE Score Long", display=display.none)
+plot(scoreShort, "BQE Score Short", display=display.none)
+
+// --- Markers / labels
+string fmtScore(float s) => na(s) ? "na" : str.tostring(math.round(s))
+
+if showStateMarkersInput and evSetupLong
+    label.new(bar_index, low, "ARM L\n" + longLvlRefName, style=label.style_label_up, textcolor=color.black, color=color.new(bullCol, 0))
+if showStateMarkersInput and evSetupShort
+    label.new(bar_index, high, "ARM S\n" + shortLvlRefName, style=label.style_label_down, textcolor=color.black, color=color.new(bearCol, 0))
+
+if showScoreLabelsInput and wantAcceptSignal and evAcceptedLong
+    label.new(bar_index, high, "ACCEPT L\n" + fmtScore(scoreLong), style=label.style_label_down, textcolor=color.black, color=color.new(bullCol, 0))
+if showScoreLabelsInput and wantAcceptSignal and evAcceptedShort
+    label.new(bar_index, low, "ACCEPT S\n" + fmtScore(scoreShort), style=label.style_label_up, textcolor=color.black, color=color.new(bearCol, 0))
+
+if showScoreLabelsInput and wantRetestSignal and evRetestLong
+    label.new(bar_index, low, "RETEST L\n" + fmtScore(scoreLong), style=label.style_label_up, textcolor=color.black, color=color.new(bullCol, 0))
+if showScoreLabelsInput and wantRetestSignal and evRetestShort
+    label.new(bar_index, high, "RETEST S\n" + fmtScore(scoreShort), style=label.style_label_down, textcolor=color.black, color=color.new(bearCol, 0))
+
+if showScoreLabelsInput and (evSweepLong or evFailedLong)
+    label.new(bar_index, high, (evSweepLong ? "SWEEP L" : "FAIL L") + "\n" + longLvlRefName, style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0))
+if showScoreLabelsInput and (evSweepShort or evFailedShort)
+    label.new(bar_index, low, (evSweepShort ? "SWEEP S" : "FAIL S") + "\n" + shortLvlRefName, style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0))
+
+// --- Alerts (state transitions only)
+alertcondition(alertSetupInput and evSetupLong, "BQE Setup Long", "BQE: Setup Armed (Long) - {{ticker}} @ {{interval}} Level={{plot(\"Active Long Level\")}}")
+alertcondition(alertSetupInput and evSetupShort, "BQE Setup Short", "BQE: Setup Armed (Short) - {{ticker}} @ {{interval}} Level={{plot(\"Active Short Level\")}}")
+
+alertcondition(alertAcceptedInput and wantAcceptSignal and evAcceptedLong, "BQE Accepted Long", "BQE: Breakout Accepted (Long) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Long\")}}")
+alertcondition(alertAcceptedInput and wantAcceptSignal and evAcceptedShort, "BQE Accepted Short", "BQE: Breakout Accepted (Short) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Short\")}}")
+
+alertcondition(alertRetestHeldInput and wantRetestSignal and evRetestLong, "BQE Retest Held Long", "BQE: Retest Held (Long) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Long\")}}")
+alertcondition(alertRetestHeldInput and wantRetestSignal and evRetestShort, "BQE Retest Held Short", "BQE: Retest Held (Short) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Short\")}}")
+
+alertcondition(alertSweepInput and (evSweepLong or evFailedLong), "BQE Sweep/Fail Long", "BQE: Sweep/Fail (Long) - {{ticker}} @ {{interval}}")
+alertcondition(alertSweepInput and (evSweepShort or evFailedShort), "BQE Sweep/Fail Short", "BQE: Sweep/Fail (Short) - {{ticker}} @ {{interval}}")
