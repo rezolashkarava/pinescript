@@ -95,8 +95,8 @@ f_tfMinutes() =>
 float tfMinutes = f_tfMinutes()
 float tfScale = i_autoMode ? math.max(0.5, math.min(3.0, math.sqrt(tfMinutes / 5.0))) : 1.0
 
-int pivotLen = math.round(i_pivotLenBase * tfScale)
-int cvdLen = math.round(i_cvdLenBase * tfScale)
+int pivotLen = int(math.round(i_pivotLenBase * tfScale))
+int cvdLen = int(math.round(i_cvdLenBase * tfScale))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ANCHOR DETECTION
@@ -156,6 +156,7 @@ else
     cvd += delta
 
 float cvdEMA = ta.ema(cvd, i_cvdSmoothLen)
+max_bars_back(cvdEMA, 100)
 float cvdMomentum = cvdEMA - cvdEMA[cvdLen]
 
 // ─────────────────────────────────────────────────────────────────────────────
