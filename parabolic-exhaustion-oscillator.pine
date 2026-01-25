@@ -158,8 +158,8 @@ bool bearishRegime = ema50 < ema200
 // ══════════════════════════════════════════════════════════════════════════════════
 
 // Price Velocity
-priceChange = close - close[velocityPeriod]
-priceVelocity = atr > 0 ? math.abs(priceChange) / atr : 0
+float priceChange = close - close[velocityPeriod]
+float priceVelocity = atr > 0 ? math.abs(priceChange) / atr : 0
 bool parabolicUp = priceChange > 0 and priceVelocity >= velocityThreshold
 bool parabolicDown = priceChange < 0 and priceVelocity >= velocityThreshold
 
@@ -177,13 +177,13 @@ bool bearishReversalCandle = shootingStar or (upperWick >= lowerWick * 2 and upp
 bool bullishReversalCandle = hammer or (lowerWick >= upperWick * 2 and lowerWick >= bodySize and candleRange >= minCandleSize * atr)
 
 // ROC Extreme
-roc = 100 * (close - close[rocPeriod]) / close[rocPeriod]
-rocPercentile = ta.percentrank(roc, rocLookback)
+float roc = 100 * (close - close[rocPeriod]) / close[rocPeriod]
+float rocPercentile = ta.percentrank(roc, rocLookback)
 bool rocExtremeBullish = rocPercentile <= 15
 bool rocExtremeBearish = rocPercentile >= 85
 
 // Volume with percentile
-volMa = ta.sma(volume, volPeriod)
+float volMa = ta.sma(volume, volPeriod)
 float volPercentile = ta.percentrank(volume, 100)
 bool volumeClimax = volume >= volMa * 1.3
 bool exceptionalVolume = volPercentile >= 95
@@ -474,8 +474,8 @@ alertcondition(alertStandardSignals and shortSignal and shortConfidence <= 1, "�
 // 🚨 ZONE ALERTS (Market conditions - useful for context)
 // ──────────────────────────────────────────────────────────────────────────────────
 
-bool enteringOverbought = ta.cross(oscillator, upperZone) and oscillator > upperZone
-bool enteringOversold = ta.cross(oscillator, lowerZone) and oscillator < lowerZone
+bool enteringOverbought = ta.crossover(oscillator, upperZone)
+bool enteringOversold = ta.crossunder(oscillator, lowerZone)
 bool extremeOverbought = oscillator >= 85
 bool extremeOversold = oscillator <= 15
 
