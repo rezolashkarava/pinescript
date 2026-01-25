@@ -1,5 +1,5 @@
 //@version=6
-indicator("Pagani Breakout Quality Engine (BQE)", overlay=true, max_labels_count=200, max_lines_count=200)
+indicator("Pagani Breakout Quality Engine (BQE)", overlay=true, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
 
 groupPreset = "Presets"
 presetMode = input.string("Balanced", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
@@ -65,10 +65,14 @@ alertAcceptedInput = input.bool(true, "Alert: Breakout Accepted", group=groupAle
 alertRetestHeldInput = input.bool(true, "Alert: Retest Held", group=groupAlerts)
 alertSweepInput = input.bool(true, "Alert: Sweep / Failed", group=groupAlerts)
 
-color bullCol = #00ff88
-color bearCol = #ff3366
-color lvlCol = color.new(color.gray, 40)
-color activeLvlCol = color.new(color.yellow, 0)
+// Colors - designed to complement ICT Order Block Pro
+color darkBg = color.new(#1a1a1a, 15)
+color bullAccent = color.new(#00bcd4, 0)      // Cyan (different from ICT's green)
+color bearAccent = color.new(#ff9800, 0)      // Orange (different from ICT's red)
+color failCol = color.new(#e91e63, 0)         // Pink for failures
+color lvlCol = color.new(#555555, 60)         // Subtle gray for levels
+color activeLvlCol = color.new(#ffd54f, 30)   // Muted yellow for active level
+color vwapCol = color.new(#78909c, 50)        // Muted blue-gray for VWAP
 
 bool shouldUpdate = signalTimingInput == "Realtime (intrabar)" or barstate.isconfirmed
 
@@ -85,21 +89,16 @@ int failWindowBars = presetMode == "Institutional (Strict)" ? math.min(failWindo
 
 bool wantAcceptSignal = entryMode == "Acceptance (close)" or entryMode == "Both"
 bool wantRetestSignal = entryMode == "Retest-hold" or entryMode == "Both"
-bool watchRetest = wantRetestSignal
 
 // --- Core features
 float atr = ta.atr(atrLenInput)
 float tr = ta.tr(true)
 float rng = high - low
 float closeLoc = rng > 0 ? (close - low) / rng : 0.5
-float body = math.abs(close - open)
-float bodyPct = rng > 0 ? body / rng : 0.0
 
 float basis = ta.sma(close, bbwLenInput)
 float dev = bbwStdevInput * ta.stdev(close, bbwLenInput)
-float bbUpper = basis + dev
-float bbLower = basis - dev
-float bbw = basis != 0 ? (bbUpper - bbLower) / basis : na
+float bbw = basis != 0 ? (2 * dev) / basis : na
 
 float bbwPctRank = ta.percentrank(bbw, bbwPctLookbackInput)
 float atrPctRank = ta.percentrank(atr, atrPctLookbackInput)
@@ -253,7 +252,7 @@ bool nearLong = not na(longLvl) and not na(nearDist) and bestLongDist <= nearDis
 bool nearShort = not na(shortLvl) and not na(nearDist) and bestShortDist <= nearDist
 
 // Touch count (for the selected level only)
-int touchesToScore(float lvl, bool isLong) =>
+touchesToScore(float lvl, bool isLong) =>
     int touches = 0
     float tol = touchTolAtrInput * atr
     if not na(lvl) and not na(tol)
@@ -273,23 +272,23 @@ bool longLevelOk = nearLong and (longLvlTier >= 3 or fastModeInput or longTouche
 bool shortLevelOk = nearShort and (shortLvlTier >= 3 or fastModeInput or shortTouches >= minTouchesInput)
 
 // --- Component scores (0..100 total)
-float scoreLevel(int tier, int touches) =>
+scoreLevel(int tier, int touches) =>
     float base = tier >= 3 ? 18 : tier == 2 ? 12 : 6
     float bonus = fastModeInput ? 0 : (touches >= 5 ? 7 : touches >= 3 ? 4 : touches >= 2 ? 2 : 0)
     math.min(base + bonus, 25)
 
-float scoreCompression() =>
+scoreCompression() =>
     float s1 = not na(bbwPctRank) ? (bbwPctRank <= bbwLowPctInput ? 10 : bbwPctRank <= bbwLowPctInput * 2.0 ? 5 : 0) : 0
     float s2 = not na(atrPctRank) ? (atrPctRank <= atrLowPctInput ? 10 : atrPctRank <= atrLowPctInput * 1.5 ? 5 : 0) : 0
     math.min(s1 + s2, 20)
 
-float scoreDisplacement(bool isLong) =>
+scoreDisplacement(bool isLong) =>
     float trScore = (not na(atr) and atr > 0 and tr >= minTrAtr * atr) ? 15 : (not na(atr) and atr > 0 and tr >= (minTrAtr * 0.9) * atr) ? 8 : 0
     float loc = isLong ? closeLoc : (1.0 - closeLoc)
     float locScore = loc >= minCloseLoc ? 10 : loc >= (minCloseLoc - 0.10) ? 5 : 0
     math.min(trScore + locScore, 25)
 
-float scoreParticipation(bool isLong) =>
+scoreParticipation(bool isLong) =>
     float vScore = (not na(dvolPctRank) and dvolPctRank >= activeDvolPctInput) ? 10 : 0
     float vwapScore = not na(vwapUtc) ? (isLong ? (close >= vwapUtc ? 10 : 0) : (close <= vwapUtc ? 10 : 0)) : 0
     math.min(vScore + vwapScore, 20)
@@ -325,10 +324,8 @@ bool dispOkShort = not na(atr) and atr > 0 and tr >= minTrAtr * atr and closeLoc
 bool setupLong = shouldUpdate and activeMarket and squeeze and longLevelOk
 bool setupShort = shouldUpdate and activeMarket and squeeze and shortLevelOk
 
-bool attemptLong(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close > lvl + closeBufferAtr * atr and dispOkLong
-bool attemptShort(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close < lvl - closeBufferAtr * atr and dispOkShort
-
-// Sweeps are tracked per state using `longSweepStartBar`/`shortSweepStartBar` + `failWindowBars`.
+attemptLong(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close > lvl + closeBufferAtr * atr and dispOkLong
+attemptShort(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close < lvl - closeBufferAtr * atr and dispOkShort
 
 // Events for alerts/markers
 bool evSetupLong = false
@@ -417,7 +414,7 @@ if longCooldown == 0
             evFailedLong := true
             longSweepStartBar := na
     else if longState == 3
-        if watchRetest
+        if wantRetestSignal
             longState := 4
             longStateBar := bar_index
         else
@@ -506,7 +503,7 @@ if shortCooldown == 0
             evFailedShort := true
             shortSweepStartBar := na
     else if shortState == 3
-        if watchRetest
+        if wantRetestSignal
             shortState := 4
             shortStateBar := bar_index
         else
@@ -545,41 +542,45 @@ bool retestShortNow = shortState == 5
 scoreLong := scoreTotal(lvlScoreLong, dispScoreLong, partScoreLong, acceptedLongNow, retestLongNow)
 scoreShort := scoreTotal(lvlScoreShort, dispScoreShort, partScoreShort, acceptedShortNow, retestShortNow)
 
-// --- Plot levels
-plot(showLevelsInput and usePdhPdlInput ? pdh : na, "PDH (UTC)", color=lvlCol, style=plot.style_linebr)
-plot(showLevelsInput and usePdhPdlInput ? pdl : na, "PDL (UTC)", color=lvlCol, style=plot.style_linebr)
-plot(showLevelsInput and usePwhPwlInput ? pwh : na, "PWH (UTC)", color=color.new(color.gray, 55), style=plot.style_linebr)
-plot(showLevelsInput and usePwhPwlInput ? pwl : na, "PWL (UTC)", color=color.new(color.gray, 55), style=plot.style_linebr)
-plot(showLevelsInput ? vwapUtc : na, "VWAP (UTC day)", color=color.new(color.blue, 30))
+// --- Plot levels (subtle styling to not clash with ICT OB)
+plot(showLevelsInput and usePdhPdlInput ? pdh : na, "PDH (UTC)", color=lvlCol, style=plot.style_linebr, linewidth=1)
+plot(showLevelsInput and usePdhPdlInput ? pdl : na, "PDL (UTC)", color=lvlCol, style=plot.style_linebr, linewidth=1)
+plot(showLevelsInput and usePwhPwlInput ? pwh : na, "PWH (UTC)", color=color.new(#555555, 70), style=plot.style_linebr, linewidth=1)
+plot(showLevelsInput and usePwhPwlInput ? pwl : na, "PWL (UTC)", color=color.new(#555555, 70), style=plot.style_linebr, linewidth=1)
+plot(showLevelsInput ? vwapUtc : na, "VWAP (UTC day)", color=vwapCol, style=plot.style_line, linewidth=1)
 
-plot(showActiveLevelInput and longState > 0 ? longLvlRef : na, "Active Long Level", color=activeLvlCol, style=plot.style_linebr, linewidth=2)
-plot(showActiveLevelInput and shortState > 0 ? shortLvlRef : na, "Active Short Level", color=activeLvlCol, style=plot.style_linebr, linewidth=2)
+plot(showActiveLevelInput and longState > 0 ? longLvlRef : na, "Active Long Level", color=activeLvlCol, style=plot.style_linebr, linewidth=1)
+plot(showActiveLevelInput and shortState > 0 ? shortLvlRef : na, "Active Short Level", color=activeLvlCol, style=plot.style_linebr, linewidth=1)
 
 plot(scoreLong, "BQE Score Long", display=display.none)
 plot(scoreShort, "BQE Score Short", display=display.none)
 
-// --- Markers / labels
-string fmtScore(float s) => na(s) ? "na" : str.tostring(math.round(s))
+// --- Markers / labels (dark theme matching ICT OB Pro style)
+fmtScore(float s) => na(s) ? "" : " [" + str.tostring(math.round(s)) + "]"
 
+// ARM signals - subtle, small labels
 if showStateMarkersInput and evSetupLong
-    label.new(bar_index, low, "ARM L\n" + longLvlRefName, style=label.style_label_up, textcolor=color.black, color=color.new(bullCol, 0))
+    label.new(bar_index, low, "◆ ARM " + longLvlRefName, xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=bullAccent, size=size.tiny)
 if showStateMarkersInput and evSetupShort
-    label.new(bar_index, high, "ARM S\n" + shortLvlRefName, style=label.style_label_down, textcolor=color.black, color=color.new(bearCol, 0))
+    label.new(bar_index, high, "◆ ARM " + shortLvlRefName, xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=bearAccent, size=size.tiny)
 
+// ACCEPT signals - prominent with score
 if showScoreLabelsInput and wantAcceptSignal and evAcceptedLong
-    label.new(bar_index, high, "ACCEPT L\n" + fmtScore(scoreLong), style=label.style_label_down, textcolor=color.black, color=color.new(bullCol, 0))
+    label.new(bar_index, high, "▲ ACCEPT" + fmtScore(scoreLong), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=bullAccent, size=size.small)
 if showScoreLabelsInput and wantAcceptSignal and evAcceptedShort
-    label.new(bar_index, low, "ACCEPT S\n" + fmtScore(scoreShort), style=label.style_label_up, textcolor=color.black, color=color.new(bearCol, 0))
+    label.new(bar_index, low, "▼ ACCEPT" + fmtScore(scoreShort), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=bearAccent, size=size.small)
 
+// RETEST signals - best quality, highlighted
 if showScoreLabelsInput and wantRetestSignal and evRetestLong
-    label.new(bar_index, low, "RETEST L\n" + fmtScore(scoreLong), style=label.style_label_up, textcolor=color.black, color=color.new(bullCol, 0))
+    label.new(bar_index, low, "▲ RETEST" + fmtScore(scoreLong), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=bullAccent, size=size.small)
 if showScoreLabelsInput and wantRetestSignal and evRetestShort
-    label.new(bar_index, high, "RETEST S\n" + fmtScore(scoreShort), style=label.style_label_down, textcolor=color.black, color=color.new(bearCol, 0))
+    label.new(bar_index, high, "▼ RETEST" + fmtScore(scoreShort), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=bearAccent, size=size.small)
 
+// SWEEP/FAIL signals - warning style
 if showScoreLabelsInput and (evSweepLong or evFailedLong)
-    label.new(bar_index, high, (evSweepLong ? "SWEEP L" : "FAIL L") + "\n" + longLvlRefName, style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0))
+    label.new(bar_index, high, (evSweepLong ? "✕ SWEEP" : "✕ FAIL"), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=failCol, size=size.tiny)
 if showScoreLabelsInput and (evSweepShort or evFailedShort)
-    label.new(bar_index, low, (evSweepShort ? "SWEEP S" : "FAIL S") + "\n" + shortLvlRefName, style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0))
+    label.new(bar_index, low, (evSweepShort ? "✕ SWEEP" : "✕ FAIL"), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=failCol, size=size.tiny)
 
 // --- Alerts (state transitions only)
 alertcondition(alertSetupInput and evSetupLong, "BQE Setup Long", "BQE: Setup Armed (Long) - {{ticker}} @ {{interval}} Level={{plot(\"Active Long Level\")}}")
