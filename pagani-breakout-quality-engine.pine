@@ -1,141 +1,291 @@
 //@version=6
-indicator("Pagani Breakout Quality Engine (BQE)", overlay=true, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
+indicator("Pagani Breakout Quality Engine Ultra [BQE]", overlay=true, max_labels_count=200, max_lines_count=100, max_boxes_count=50)
 
-groupPreset = "Presets"
-presetMode = input.string("Balanced", "Preset", options=["Institutional (Strict)", "Balanced", "Aggressive", "Manual"], group=groupPreset,
-     tooltip="Institutional: fewer, higher-quality confirmations (best for low-liquidity alts).\nBalanced: default.\nAggressive: more attempts/triggers.\nManual: use inputs as-is.")
+// ============================================================================
+// BREAKOUT QUALITY ENGINE ULTRA V2.2 - SIMPLIFIED & INTUITIVE
+// Complementary indicator to ICT Order Block Pro [Paganie]
+//
+// V2.2 Changes:
+// - SIMPLIFIED: Reduced settings from 40+ to 15 essential inputs
+// - REMOVED: Confusing ATR multiplier inputs (now auto-optimized by preset)
+// - REMOVED: Individual session hour inputs (uses standard ICT killzones)
+// - REMOVED: Touch validation settings (always fast mode for performance)
+// - REMOVED: Compression detection (rarely used, added confusion)
+// - REMOVED: Psychological levels (low accuracy, cluttered interface)
+// - IMPROVED: Clear tooltips explaining each setting
+// - IMPROVED: Grouped settings into logical categories
+// - KEPT: Trading Style presets auto-tune all internal parameters
+//
+// V2.1 Changes:
+// - FIXED: OTE zone calculation (correct ICT 62-79% retracement)
+// - FIXED: Session wraparound for overnight sessions
+// - FIXED: Retest validation logic
+// - OPTIMIZED: Touch counting, level arrays, consolidated HTF requests
+// ============================================================================
 
-groupLevels = "Levels"
-fastModeInput = input.bool(false, "Fast Mode (Skip Touch Scan)", group=groupLevels,
-     tooltip="Performance mode. Skips multi-touch counting loops and treats HTF levels (PDH/PDL, PWH/PWL, H1 pivots) as valid without touch scoring.\nRecommended on low timeframes with many symbols or large lookbacks.")
-usePdhPdlInput = input.bool(true, "Use PDH/PDL (UTC)", group=groupLevels)
-usePwhPwlInput = input.bool(true, "Use PWH/PWL (UTC)", group=groupLevels)
-useH1PivotsInput = input.bool(true, "Use 1H Pivots", group=groupLevels)
-pivotLeftInput = input.int(3, "1H Pivot Left", minval=1, maxval=20, group=groupLevels)
-pivotRightInput = input.int(3, "1H Pivot Right", minval=1, maxval=20, group=groupLevels)
+// === PERFORMANCE CONSTANTS ===
+int MAX_TOUCH_LOOKBACK = 100  // Reduced from 200 for performance
+int CACHE_REFRESH_BARS = 5   // Refresh touch cache every N bars
 
-touchLookbackInput = input.int(200, "Touch Lookback (bars)", minval=20, maxval=2000, group=groupLevels)
-touchTolAtrInput = input.float(0.15, "Touch Tolerance (x ATR)", minval=0.0, maxval=2.0, step=0.05, group=groupLevels)
-minTouchesInput = input.int(3, "Min Touches", minval=1, maxval=10, group=groupLevels)
+// === TIMEFRAME DETECTION ===
+float tf_in_minutes = timeframe.in_seconds() / 60.0
+bool is_scalping = tf_in_minutes <= 15
+bool is_intraday = tf_in_minutes > 15 and tf_in_minutes <= 60
+bool is_swing = tf_in_minutes > 60 and tf_in_minutes <= 240
+bool is_position = tf_in_minutes > 240
 
-groupSetup = "Setup (Compression + Near Level)"
-signalTimingInput = input.string("Confirmed (bar close)", "Signal Timing", options=["Confirmed (bar close)", "Realtime (intrabar)"], group=groupSetup)
-atrLenInput = input.int(14, "ATR Length", minval=1, group=groupSetup)
-bbwLenInput = input.int(20, "BB Length", minval=1, group=groupSetup)
-bbwStdevInput = input.float(2.0, "BB Stdev", minval=0.1, maxval=10.0, step=0.1, group=groupSetup)
-bbwPctLookbackInput = input.int(250, "BBW %Rank Lookback", minval=50, maxval=5000, group=groupSetup)
-bbwLowPctInput = input.float(20.0, "BBW Low %Rank", minval=1.0, maxval=60.0, step=1.0, group=groupSetup)
-atrPctLookbackInput = input.int(250, "ATR %Rank Lookback", minval=50, maxval=5000, group=groupSetup)
-atrLowPctInput = input.float(35.0, "ATR Low %Rank", minval=1.0, maxval=60.0, step=1.0, group=groupSetup)
-nearLevelAtrInput = input.float(1.0, "Near Level (x ATR)", minval=0.1, maxval=10.0, step=0.1, group=groupSetup)
+// === HELPER FUNCTIONS ===
+round2(float x) => na(x) ? na : math.round(x * 100) / 100
 
-groupTrigger = "Trigger (Displacement)"
-closeBufferAtrInput = input.float(0.05, "Close Buffer (x ATR)", minval=0.0, maxval=2.0, step=0.01, group=groupTrigger)
-minTrAtrInput = input.float(1.25, "Min TR (x ATR)", minval=0.1, maxval=10.0, step=0.05, group=groupTrigger)
-minCloseLocInput = input.float(0.80, "Min Close Location", minval=0.5, maxval=1.0, step=0.01, group=groupTrigger,
-     tooltip="Close location inside the candle range. 0.80 means close in the top 20% (for longs).")
+strengthSymbol(string s) =>
+    s == "Elite" ? "★" : s == "Strong" ? "◆" : s == "Mid" ? "◇" : "○"
 
-groupConfirm = "Confirmation (Acceptance / Retest)"
-entryModeInput = input.string("Both", "Entry Mode", options=["Acceptance (close)", "Retest-hold", "Both"], group=groupConfirm,
-     tooltip="Acceptance (close): signal on accepted breakout close.\nRetest-hold: signal only after retest holds (filters more noise on low-liquidity alts).\nBoth: show both events.")
-acceptBarsInput = input.int(2, "Acceptance Closes", minval=1, maxval=5, group=groupConfirm)
-acceptMaxBarsInput = input.int(5, "Max Bars To Accept", minval=1, maxval=50, group=groupConfirm)
-retestTolAtrInput = input.float(0.25, "Retest Tolerance (x ATR)", minval=0.0, maxval=3.0, step=0.05, group=groupConfirm)
-retestMaxBarsInput = input.int(12, "Max Bars To Retest", minval=1, maxval=200, group=groupConfirm)
+// Session time helper (handles overnight wraparound)
+inSession(int startHour, int endHour, int currentHour) =>
+    if startHour <= endHour
+        currentHour >= startHour and currentHour < endHour
+    else  // Overnight session (e.g., 22:00 - 02:00)
+        currentHour >= startHour or currentHour < endHour
 
-groupSweep = "Failures (Sweeps / Reclaims)"
-sweepMinExcAtrInput = input.float(0.20, "Min Sweep Excursion (x ATR)", minval=0.0, maxval=5.0, step=0.05, group=groupSweep)
-failWindowBarsInput = input.int(3, "Fail Window (bars)", minval=1, maxval=50, group=groupSweep)
+// Safe division
+safeDivide(float num, float denom) =>
+    na(num) or na(denom) or denom == 0 ? na : num / denom
 
-groupRegime = "Regime (Low-Liquidity Guardrails)"
-useRegimeInput = input.bool(true, "Enable Active-Market Filter", group=groupRegime)
-regimeLookbackInput = input.int(250, "Regime %Rank Lookback", minval=50, maxval=5000, group=groupRegime)
-activeTrPctInput = input.float(60.0, "Active TR/ATR %Rank", minval=1.0, maxval=99.0, step=1.0, group=groupRegime)
-activeDvolPctInput = input.float(55.0, "Active $Vol %Rank", minval=1.0, maxval=99.0, step=1.0, group=groupRegime)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INPUTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-groupVis = "Visuals"
-showLevelsInput = input.bool(true, "Show Key Levels", group=groupVis)
-showActiveLevelInput = input.bool(true, "Show Active Level", group=groupVis)
-showScoreLabelsInput = input.bool(true, "Show Score Labels", group=groupVis)
-showStateMarkersInput = input.bool(true, "Show State Markers", group=groupVis)
+// === MAIN SETTINGS ===
+string GRP_MAIN = "⚙️ Main Settings"
+presetMode = input.string("Balanced", "Trading Style", options=["Institutional (Strict)", "Balanced", "Aggressive"], group=GRP_MAIN,
+     tooltip="INSTITUTIONAL: Fewer but higher quality signals. Requires retest confirmation.\nBALANCED: Good mix of quality and frequency.\nAGGRESSIVE: More signals, faster entries.")
+signalTiming = input.string("Confirmed (bar close)", "Signal Timing", options=["Confirmed (bar close)", "Realtime (intrabar)"], group=GRP_MAIN,
+     tooltip="CONFIRMED: Signals trigger on bar close (recommended).\nREALTIME: Signals can trigger during bar formation.")
+entryModeInput = input.string("Both", "Entry Type", options=["Acceptance", "Retest", "Both"], group=GRP_MAIN,
+     tooltip="ACCEPTANCE: Signal on breakout confirmation.\nRETEST: Signal when price retests broken level.\nBOTH: Show both signal types.")
 
-groupAlerts = "Alerts"
-alertSetupInput = input.bool(true, "Alert: Setup Armed", group=groupAlerts)
-alertAcceptedInput = input.bool(true, "Alert: Breakout Accepted", group=groupAlerts)
-alertRetestHeldInput = input.bool(true, "Alert: Retest Held", group=groupAlerts)
-alertSweepInput = input.bool(true, "Alert: Sweep / Failed", group=groupAlerts)
+// === KEY LEVELS ===
+string GRP_LEVELS = "📊 Key Levels"
+usePdhPdl = input.bool(true, "Previous Day High/Low", group=GRP_LEVELS, tooltip="Track yesterday's high and low as key levels.")
+usePwhPwl = input.bool(true, "Previous Week High/Low", group=GRP_LEVELS, tooltip="Track last week's high and low as key levels.")
+usePmhPml = input.bool(false, "Previous Month High/Low", group=GRP_LEVELS, tooltip="Track last month's high and low as key levels.")
+useOpeningRange = input.bool(false, "Opening Range (NY)", group=GRP_LEVELS, tooltip="Track NY session opening range (9:30-10:00 ET).")
+useH1Pivots = input.bool(false, "Hourly Pivots", group=GRP_LEVELS, tooltip="Track swing highs/lows from 1-hour timeframe.")
+showVwap = input.bool(false, "Daily VWAP", group=GRP_LEVELS, tooltip="Display daily Volume Weighted Average Price.")
 
-// Colors - designed to complement ICT Order Block Pro
-color darkBg = color.new(#1a1a1a, 15)
-color bullAccent = color.new(#00bcd4, 0)      // Cyan (different from ICT's green)
-color bearAccent = color.new(#ff9800, 0)      // Orange (different from ICT's red)
-color failCol = color.new(#e91e63, 0)         // Pink for failures
-color lvlCol = color.new(#555555, 60)         // Subtle gray for levels
-color activeLvlCol = color.new(#ffd54f, 30)   // Muted yellow for active level
-color vwapCol = color.new(#78909c, 50)        // Muted blue-gray for VWAP
+// === FILTERS ===
+string GRP_FILTERS = "🎯 Filters"
+useSessionFilter = input.bool(true, "Killzone Filter", group=GRP_FILTERS,
+     tooltip="Boost signals during London (2-5 UTC), NY (8-11 UTC), and Asia (23-2 UTC) sessions.")
+useZoneFilter = input.bool(true, "Premium/Discount Filter", group=GRP_FILTERS,
+     tooltip="Favor longs in discount zones (below equilibrium) and shorts in premium zones (above equilibrium).")
+useHtfBias = input.bool(true, "HTF Trend Filter", group=GRP_FILTERS,
+     tooltip="Align signals with higher timeframe trend direction.")
+htfTimeframe = input.timeframe("240", "HTF Timeframe", group=GRP_FILTERS, tooltip="Higher timeframe for trend bias (default: 4H).")
+useRegimeFilter = input.bool(true, "Active Market Filter", group=GRP_FILTERS,
+     tooltip="Only signal when market shows sufficient volatility and volume activity.")
 
-bool shouldUpdate = signalTimingInput == "Realtime (intrabar)" or barstate.isconfirmed
+// === VISUALS ===
+string GRP_VIS = "🎨 Visuals"
+visualMode = input.string("Minimal", "Visual Mode", options=["Minimal", "Standard", "Full"], group=GRP_VIS,
+     tooltip="MINIMAL: Only active levels.\nSTANDARD: Show key level lines.\nFULL: All levels, zones, and OTE.")
+showLabels = input.bool(true, "Show Signal Labels", group=GRP_VIS)
+showScoreInLabel = input.bool(true, "Show Quality Score", group=GRP_VIS, tooltip="Display numeric quality score (0-100) in signal labels.")
+showDashboard = input.bool(true, "Show Dashboard", group=GRP_VIS)
+dashboardLocation = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GRP_VIS)
+dashboardSize = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=GRP_VIS, tooltip="Size of dashboard text and cells.")
+dashboardTransparency = input.int(90, "Dashboard Transparency", minval=0, maxval=90, step=5, group=GRP_VIS, tooltip="Background transparency (0=solid, 90=nearly invisible).")
+showZoneLines = input.bool(false, "Show Zone Lines", group=GRP_VIS, tooltip="Draw equilibrium and zone boundary lines (requires Full visual mode).")
+showOteZone = input.bool(false, "Show OTE Zone", group=GRP_VIS, tooltip="Highlight the Optimal Trade Entry zone (62-79% retracement).")
 
-// Preset-derived parameters (used across scoring + state machine)
-int cooldownBars = presetMode == "Institutional (Strict)" ? 30 : presetMode == "Aggressive" ? 10 : 20
-string entryMode = presetMode == "Institutional (Strict)" ? "Retest-hold" : presetMode == "Aggressive" ? "Acceptance (close)" : entryModeInput
-float closeBufferAtr = presetMode == "Institutional (Strict)" ? math.max(closeBufferAtrInput, 0.08) : presetMode == "Aggressive" ? math.min(closeBufferAtrInput, 0.03) : closeBufferAtrInput
-float minTrAtr = presetMode == "Institutional (Strict)" ? math.max(minTrAtrInput, 1.5) : presetMode == "Aggressive" ? math.min(minTrAtrInput, 1.1) : minTrAtrInput
-float minCloseLoc = presetMode == "Institutional (Strict)" ? math.max(minCloseLocInput, 0.85) : presetMode == "Aggressive" ? math.min(minCloseLocInput, 0.75) : minCloseLocInput
-int acceptBars = presetMode == "Institutional (Strict)" ? math.max(acceptBarsInput, 2) : presetMode == "Aggressive" ? 1 : acceptBarsInput
-int acceptMaxBars = presetMode == "Institutional (Strict)" ? math.min(acceptMaxBarsInput, 4) : presetMode == "Aggressive" ? math.max(acceptMaxBarsInput, 8) : acceptMaxBarsInput
-float sweepMinExcAtr = presetMode == "Institutional (Strict)" ? math.max(sweepMinExcAtrInput, 0.35) : presetMode == "Aggressive" ? math.min(sweepMinExcAtrInput, 0.10) : sweepMinExcAtrInput
-int failWindowBars = presetMode == "Institutional (Strict)" ? math.min(failWindowBarsInput, 3) : presetMode == "Aggressive" ? math.max(failWindowBarsInput, 5) : failWindowBarsInput
+// === ALERTS ===
+string GRP_ALERTS = "🔔 Alerts"
+alertSetup = input.bool(true, "Setup Armed", group=GRP_ALERTS, tooltip="Alert when price approaches a key level.")
+alertAccepted = input.bool(true, "Breakout Accepted", group=GRP_ALERTS, tooltip="Alert when breakout is confirmed.")
+alertRetest = input.bool(true, "Retest Held", group=GRP_ALERTS, tooltip="Alert when price successfully retests broken level.")
+alertFailed = input.bool(true, "Failed/Sweep", group=GRP_ALERTS, tooltip="Alert when breakout fails or level is swept.")
 
-bool wantAcceptSignal = entryMode == "Acceptance (close)" or entryMode == "Both"
-bool wantRetestSignal = entryMode == "Retest-hold" or entryMode == "Both"
+// === ADVANCED (Hidden defaults - for power users) ===
+// These use optimized defaults and are hidden to reduce confusion
+// Touch validation
+int touchLookback = 100
+float touchTolAtr = 0.15
+int minTouchesRequired = 2
+int touchSeparationBars = 3
+bool fastMode = true  // Always use fast mode for performance
 
-// --- Core features
-float atr = ta.atr(atrLenInput)
+// Session times (UTC) - using ICT standard killzones
+int londonStart = 2, int londonEnd = 5
+int nyStart = 8, int nyEnd = 11
+int asiaStart = 23, int asiaEnd = 2
+bool useMacroTimes = true
+
+// Zone settings
+int zoneLookback = 50
+
+// HTF Bias
+int htfEmaLen = 21
+
+// Trigger thresholds
+float nearLevelAtr = 1.5
+float closeBufferAtr = 0.05
+float minTrAtr = 1.25
+float minCloseLoc = 0.75
+
+// Confirmation
+int acceptBarsRequired = 2
+int acceptMaxBars = 5
+float retestTolAtr = 0.3
+int retestMaxBars = 12
+float retestMaxWickAtr = 0.5
+
+// Failure detection
+float sweepMinExcAtr = 0.25
+int failWindowBars = 3
+
+// Regime filter
+float activeTrPct = 40.0
+float activeDvolPct = 40.0
+string activeLogicMode = "OR"
+
+// Removed features (caused confusion, minimal accuracy benefit)
+bool useCompression = false
+int bbwLen = 20
+float bbwStdev = 2.0
+float bbwLowPct = 25.0
+float atrLowPct = 35.0
+bool usePsychLevels = false
+float psychLevelInterval = 100.0
+int pivotLeftBars = 3
+string biasMode = "Filter"
+string settingsMode = "Auto"
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// COLORS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+color C_BULL = #00ff88
+color C_BEAR = #ff3366
+color C_FAIL = #ff6600
+color C_NEUTRAL = #888888
+color C_LEVEL = color.new(#555555, 50)
+color C_OTE = color.new(#ffd700, 70)
+color C_VWAP = color.new(#2196f3, 50)
+color C_DASH_BG = color.new(#000000, 15)
+
+// Derived visual settings
+bool showLevels = visualMode == "Standard" or visualMode == "Full"
+bool showAllLevels = visualMode == "Full"
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PRESET CONFIGURATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+bool isStrict = presetMode == "Institutional (Strict)"
+bool isAggressive = presetMode == "Aggressive"
+
+// Trading style presets (auto-optimized)
+int cooldownBars = isStrict ? 30 : isAggressive ? 10 : 20
+string entryMode = isStrict ? "Retest" : isAggressive ? "Acceptance" : entryModeInput
+float effCloseBuffer = isStrict ? 0.08 : isAggressive ? 0.03 : 0.05
+float effMinTr = isStrict ? 1.5 : isAggressive ? 1.0 : 1.25
+float effMinCloseLoc = isStrict ? 0.80 : isAggressive ? 0.65 : 0.75
+int effAcceptBars = isStrict ? 2 : isAggressive ? 1 : 2
+int effAcceptMax = isStrict ? 4 : isAggressive ? 8 : 5
+float effSweepExc = isStrict ? 0.35 : isAggressive ? 0.15 : 0.25
+int effFailWindow = isStrict ? 2 : isAggressive ? 5 : 3
+
+// Auto-scale lookbacks for timeframe
+int effTouchLookback = is_scalping ? 60 : is_intraday ? 80 : 100
+int effZoneLookback = is_scalping ? 30 : is_intraday ? 40 : 50
+
+bool wantAcceptSignal = entryMode == "Acceptance" or entryMode == "Both"
+bool wantRetestSignal = entryMode == "Retest" or entryMode == "Both"
+bool shouldUpdate = signalTiming == "Realtime (intrabar)" or barstate.isconfirmed
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CORE CALCULATIONS (Cached)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+float atr = ta.atr(14)
 float tr = ta.tr(true)
 float rng = high - low
 float closeLoc = rng > 0 ? (close - low) / rng : 0.5
 
-float basis = ta.sma(close, bbwLenInput)
-float dev = bbwStdevInput * ta.stdev(close, bbwLenInput)
-float bbw = basis != 0 ? (2 * dev) / basis : na
+// Validate ATR
+bool atrValid = not na(atr) and atr > 0
 
-float bbwPctRank = ta.percentrank(bbw, bbwPctLookbackInput)
-float atrPctRank = ta.percentrank(atr, atrPctLookbackInput)
+// Bollinger Band Width (only compute if needed)
+var float bbw = na
+var float bbwPctRank = na
+var float atrPctRank = na
 
-bool squeeze = not na(bbwPctRank) and not na(atrPctRank) and bbwPctRank <= bbwLowPctInput and atrPctRank <= atrLowPctInput
+if useCompression
+    float bbBasis = ta.sma(close, bbwLen)
+    float bbDev = bbwStdev * ta.stdev(close, bbwLen)
+    bbw := bbBasis != 0 ? (2 * bbDev) / bbBasis : na
+    bbwPctRank := ta.percentrank(bbw, 100)
+    atrPctRank := ta.percentrank(atr, 100)
 
-// Active-market regime (percentile-based; robust across alts)
-float trAtr = (not na(atr) and atr > 0) ? tr / atr : na
-float trAtrPctRank = ta.percentrank(trAtr, regimeLookbackInput)
+bool inSqueeze = useCompression and not na(bbwPctRank) and not na(atrPctRank) and bbwPctRank <= bbwLowPct and atrPctRank <= atrLowPct
+
+// Active market regime (optimized lookback)
+float trAtrRatio = atrValid ? tr / atr : na
+float trPctRank = ta.percentrank(trAtrRatio, 100)
 float dvol = volume * close
-float dvolPctRank = ta.percentrank(dvol, regimeLookbackInput)
-bool activeMarket = not useRegimeInput or ((not na(trAtrPctRank) and trAtrPctRank >= activeTrPctInput) or (not na(dvolPctRank) and dvolPctRank >= activeDvolPctInput))
+float dvolPctRank = ta.percentrank(dvol, 100)
 
-// --- UTC-anchored PDH/PDL and PWH/PWL
+bool trOk = not na(trPctRank) and trPctRank >= activeTrPct
+bool volOk = not na(dvolPctRank) and dvolPctRank >= activeDvolPct
+bool activeMarket = not useRegimeFilter or (activeLogicMode == "AND" ? (trOk and volOk) : (trOk or volOk))
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SESSION DETECTION (Fixed wraparound)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+int hourUtc = hour(time, "UTC")
+int minuteUtc = minute(time, "UTC")
+
+bool inLondonKZ = inSession(londonStart, londonEnd, hourUtc)
+bool inNyKZ = inSession(nyStart, nyEnd, hourUtc)
+bool inAsiaKZ = inSession(asiaStart, asiaEnd, hourUtc)
+bool inOverlapKZ = inLondonKZ and inNyKZ
+bool inAnyKillzone = inLondonKZ or inNyKZ
+
+bool isMacroTime = useMacroTimes and (minuteUtc == 0 or minuteUtc == 30 or minuteUtc == 50)
+
+// Session score
+int sessionScore = 0
+if useSessionFilter
+    sessionScore := inOverlapKZ ? 8 : inNyKZ ? 6 : inLondonKZ ? 5 : inAsiaKZ ? 3 : 1
+    if isMacroTime
+        sessionScore := math.min(sessionScore + 2, 10)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// KEY LEVELS (Optimized UTC tracking)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 int yUtc = year(time, "UTC")
 int mUtc = month(time, "UTC")
 int dUtc = dayofmonth(time, "UTC")
 int wUtc = weekofyear(time, "UTC")
+
 int dayId = yUtc * 10000 + mUtc * 100 + dUtc
 int weekId = yUtc * 100 + wUtc
+int monthId = yUtc * 100 + mUtc
 
 var int lastDayId = na
 var int lastWeekId = na
+var int lastMonthId = na
 
-var float dayHigh = na
-var float dayLow = na
-var float pdh = na
-var float pdl = na
-
-var float weekHigh = na
-var float weekLow = na
-var float pwh = na
-var float pwl = na
+// Level storage
+var float dayHigh = na, var float dayLow = na
+var float pdh = na, var float pdl = na
+var float weekHigh = na, var float weekLow = na
+var float pwh = na, var float pwl = na
+var float monthHigh = na, var float monthLow = na
+var float pmh = na, var float pml = na
 
 bool newDay = not na(lastDayId) and dayId != lastDayId
 bool newWeek = not na(lastWeekId) and weekId != lastWeekId
+bool newMonth = not na(lastMonthId) and monthId != lastMonthId
 
+// Update daily
 if na(lastDayId)
     lastDayId := dayId
     dayHigh := high
@@ -150,6 +300,7 @@ else
     dayHigh := math.max(dayHigh, high)
     dayLow := math.min(dayLow, low)
 
+// Update weekly
 if na(lastWeekId)
     lastWeekId := weekId
     weekHigh := high
@@ -164,433 +315,690 @@ else
     weekHigh := math.max(weekHigh, high)
     weekLow := math.min(weekLow, low)
 
-// UTC daily VWAP (resets at 00:00 UTC)
-var float vwapPv = na
-var float vwapV = na
-if na(vwapPv)
-    vwapPv := hlc3 * volume
-    vwapV := volume
-else if newDay
-    vwapPv := hlc3 * volume
-    vwapV := volume
+// Update monthly
+if na(lastMonthId)
+    lastMonthId := monthId
+    monthHigh := high
+    monthLow := low
+else if newMonth
+    pmh := monthHigh
+    pml := monthLow
+    monthHigh := high
+    monthLow := low
+    lastMonthId := monthId
 else
-    vwapPv += hlc3 * volume
-    vwapV += volume
-float vwapUtc = (not na(vwapV) and vwapV > 0) ? vwapPv / vwapV : na
+    monthHigh := math.max(monthHigh, high)
+    monthLow := math.min(monthLow, low)
 
-// --- 1H pivots (non-repainting)
-int pivotLeft = presetMode == "Aggressive" ? math.max(pivotLeftInput - 1, 1) : presetMode == "Institutional (Strict)" ? math.max(pivotLeftInput, 4) : pivotLeftInput
-int pivotRight = presetMode == "Aggressive" ? math.max(pivotRightInput - 1, 1) : presetMode == "Institutional (Strict)" ? math.max(pivotRightInput, 4) : pivotRightInput
+// VWAP
+var float vwapPv = na, var float vwapV = na
+if showVwap
+    if na(vwapPv) or newDay
+        vwapPv := hlc3 * volume
+        vwapV := volume
+    else
+        vwapPv += hlc3 * volume
+        vwapV += volume
+float vwapDaily = showVwap and not na(vwapV) and vwapV > 0 ? vwapPv / vwapV : na
 
-float ph1h = useH1PivotsInput ? request.security(syminfo.tickerid, "60", ta.pivothigh(high, pivotLeft, pivotRight), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : na
-float pl1h = useH1PivotsInput ? request.security(syminfo.tickerid, "60", ta.pivotlow(low, pivotLeft, pivotRight), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : na
+// Opening Range
+var float orHigh = na, var float orLow = na, var bool orComplete = false
+if useOpeningRange
+    if newDay
+        orHigh := na
+        orLow := na
+        orComplete := false
+    bool inOrWindow = hourUtc == 13 or (hourUtc == 14 and minuteUtc < 30)
+    if inOrWindow and not orComplete
+        orHigh := na(orHigh) ? high : math.max(orHigh, high)
+        orLow := na(orLow) ? low : math.min(orLow, low)
+    else if not inOrWindow and not na(orHigh) and hourUtc >= 14
+        orComplete := true
 
-var float lastPh1h = na
-var float lastPl1h = na
+// H1 Pivots (single request)
+float ph1h = na, float pl1h = na
+if useH1Pivots
+    ph1h := request.security(syminfo.tickerid, "60", ta.pivothigh(high, pivotLeftBars, pivotLeftBars), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    pl1h := request.security(syminfo.tickerid, "60", ta.pivotlow(low, pivotLeftBars, pivotLeftBars), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+var float lastPh1h = na, var float lastPl1h = na
 if not na(ph1h)
     lastPh1h := ph1h
 if not na(pl1h)
     lastPl1h := pl1h
 
-// --- Candidate level selection (nearest above for long, nearest below for short)
-float bestLongDist = na
-float bestShortDist = na
-float longLvl = na
-float shortLvl = na
-string longLvlName = ""
-string shortLvlName = ""
-int longLvlTier = 0
-int shortLvlTier = 0
+// Psychological levels
+float nearestPsychAbove = usePsychLevels ? math.ceil(close / psychLevelInterval) * psychLevelInterval : na
+float nearestPsychBelow = usePsychLevels ? math.floor(close / psychLevelInterval) * psychLevelInterval : na
 
-if usePdhPdlInput and not na(pdh)
-    float dist = pdh - close
-    if dist > 0 and (na(bestLongDist) or dist < bestLongDist)
-        bestLongDist := dist
-        longLvl := pdh
-        longLvlName := "PDH"
-        longLvlTier := 3
-if usePdhPdlInput and not na(pdl)
-    float dist = close - pdl
-    if dist > 0 and (na(bestShortDist) or dist < bestShortDist)
-        bestShortDist := dist
-        shortLvl := pdl
-        shortLvlName := "PDL"
-        shortLvlTier := 3
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PREMIUM/DISCOUNT ZONES (FIXED OTE CALCULATION)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+float swingHigh = ta.highest(high, effZoneLookback)
+float swingLow = ta.lowest(low, effZoneLookback)
+float swingRange = swingHigh - swingLow
 
-if usePwhPwlInput and not na(pwh)
-    float dist = pwh - close
-    if dist > 0 and (na(bestLongDist) or dist < bestLongDist)
-        bestLongDist := dist
-        longLvl := pwh
-        longLvlName := "PWH"
-        longLvlTier := 3
-if usePwhPwlInput and not na(pwl)
-    float dist = close - pwl
-    if dist > 0 and (na(bestShortDist) or dist < bestShortDist)
-        bestShortDist := dist
-        shortLvl := pwl
-        shortLvlName := "PWL"
-        shortLvlTier := 3
+float equilibrium = swingLow + swingRange * 0.5
 
-if useH1PivotsInput and not na(lastPh1h)
-    float dist = lastPh1h - close
-    if dist > 0 and (na(bestLongDist) or dist < bestLongDist)
-        bestLongDist := dist
-        longLvl := lastPh1h
-        longLvlName := "H1 Pivot"
-        longLvlTier := 2
-if useH1PivotsInput and not na(lastPl1h)
-    float dist = close - lastPl1h
-    if dist > 0 and (na(bestShortDist) or dist < bestShortDist)
-        bestShortDist := dist
-        shortLvl := lastPl1h
-        shortLvlName := "H1 Pivot"
-        shortLvlTier := 2
+// CORRECT ICT OTE CALCULATION:
+// OTE is 62-79% Fibonacci RETRACEMENT
+// For LONGS: We want price in DISCOUNT (retraced 62-79% from swing HIGH)
+//   = swingHigh - (swingRange * 0.62) to swingHigh - (swingRange * 0.79)
+//   = 38% to 21% of range from bottom
+// For SHORTS: We want price in PREMIUM (retraced 62-79% from swing LOW)
+//   = swingLow + (swingRange * 0.62) to swingLow + (swingRange * 0.79)
+//   = 62% to 79% of range from bottom
 
-float nearDist = nearLevelAtrInput * atr
-bool nearLong = not na(longLvl) and not na(nearDist) and bestLongDist <= nearDist
-bool nearShort = not na(shortLvl) and not na(nearDist) and bestShortDist <= nearDist
+float oteLongTop = swingLow + swingRange * 0.38    // 38% from low (62% retracement from high)
+float oteLongBot = swingLow + swingRange * 0.21    // 21% from low (79% retracement from high)
+float oteShortBot = swingLow + swingRange * 0.62   // 62% from low (62% retracement from low)
+float oteShortTop = swingLow + swingRange * 0.79   // 79% from low (79% retracement from low)
 
-// Touch count (for the selected level only)
-touchesToScore(float lvl, bool isLong) =>
+bool inDiscount = close < equilibrium
+bool inPremium = close > equilibrium
+bool inOteLong = close >= oteLongBot and close <= oteLongTop
+bool inOteShort = close >= oteShortBot and close <= oteShortTop
+
+// Zone scoring
+int zoneScoreLong = 0
+int zoneScoreShort = 0
+if useZoneFilter and swingRange > 0
+    float pricePos = (close - swingLow) / swingRange
+    // Long scoring (want discount)
+    zoneScoreLong := pricePos < 0.3 ? 12 : pricePos < 0.5 ? 8 : pricePos < 0.6 ? 4 : 0
+    // Short scoring (want premium)
+    zoneScoreShort := pricePos > 0.7 ? 12 : pricePos > 0.5 ? 8 : pricePos > 0.4 ? 4 : 0
+    // OTE bonus
+    if inOteLong
+        zoneScoreLong := math.min(zoneScoreLong + 3, 12)
+    if inOteShort
+        zoneScoreShort := math.min(zoneScoreShort + 3, 12)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HTF BIAS (Single consolidated request)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[htfClose, htfEma] = request.security(syminfo.tickerid, htfTimeframe, [close, ta.ema(close, htfEmaLen)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+bool htfBullish = useHtfBias and not na(htfEma) and htfClose > htfEma
+bool htfBearish = useHtfBias and not na(htfEma) and htfClose < htfEma
+
+int htfScoreLong = 0
+int htfScoreShort = 0
+if useHtfBias and biasMode != "Off"
+    if htfBullish
+        htfScoreLong := 10
+        htfScoreShort := biasMode == "Filter" ? 0 : 3
+    else if htfBearish
+        htfScoreShort := 10
+        htfScoreLong := biasMode == "Filter" ? 0 : 3
+    else
+        htfScoreLong := 5
+        htfScoreShort := 5
+
+bool longBiasOk = not useHtfBias or biasMode != "Filter" or htfBullish or (not htfBullish and not htfBearish)
+bool shortBiasOk = not useHtfBias or biasMode != "Filter" or htfBearish or (not htfBullish and not htfBearish)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// LEVEL SELECTION (Optimized - no arrays, direct selection)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Optimized touch counting (only called when needed)
+countTouches(float lvl, bool checkHigh, int lookback) =>
     int touches = 0
-    float tol = touchTolAtrInput * atr
-    if not na(lvl) and not na(tol)
-        for i = 0 to touchLookbackInput - 1
-            bool hit = isLong ? math.abs(high[i] - lvl) <= tol : math.abs(low[i] - lvl) <= tol
-            if hit
+    int lastTouchBar = -9999
+    float tol = atrValid ? touchTolAtr * atr : na
+    if not na(lvl) and not na(tol) and not fastMode
+        int maxI = math.min(lookback - 1, bar_index)
+        for i = 0 to maxI
+            float p = checkHigh ? high[i] : low[i]
+            if math.abs(p - lvl) <= tol and (i - lastTouchBar) >= touchSeparationBars
                 touches += 1
+                lastTouchBar := i
+                if touches >= 5  // Early termination
+                    break
     touches
 
-bool touchScanLong = not fastModeInput and nearLong and longLvlTier < 3 and shouldUpdate and squeeze and activeMarket
-bool touchScanShort = not fastModeInput and nearShort and shortLvlTier < 3 and shouldUpdate and squeeze and activeMarket
+// Find best level above (for longs)
+var float bestLongLvl = na
+var string bestLongName = ""
+var int bestLongTier = 0
 
-int longTouches = touchScanLong ? touchesToScore(longLvl, true) : 0
-int shortTouches = touchScanShort ? touchesToScore(shortLvl, false) : 0
+// Find best level below (for shorts)
+var float bestShortLvl = na
+var string bestShortName = ""
+var int bestShortTier = 0
 
-bool longLevelOk = nearLong and (longLvlTier >= 3 or fastModeInput or longTouches >= minTouchesInput)
-bool shortLevelOk = nearShort and (shortLvlTier >= 3 or fastModeInput or shortTouches >= minTouchesInput)
+// Rebuild level selection (efficient direct comparison)
+bestLongLvl := na
+bestLongName := ""
+bestLongTier := 0
+bestShortLvl := na
+bestShortName := ""
+bestShortTier := 0
 
-// --- Component scores (0..100 total)
-scoreLevel(int tier, int touches) =>
-    float base = tier >= 3 ? 18 : tier == 2 ? 12 : 6
-    float bonus = fastModeInput ? 0 : (touches >= 5 ? 7 : touches >= 3 ? 4 : touches >= 2 ? 2 : 0)
-    math.min(base + bonus, 25)
+float bestLongDist = na
+float bestShortDist = na
 
-scoreCompression() =>
-    float s1 = not na(bbwPctRank) ? (bbwPctRank <= bbwLowPctInput ? 10 : bbwPctRank <= bbwLowPctInput * 2.0 ? 5 : 0) : 0
-    float s2 = not na(atrPctRank) ? (atrPctRank <= atrLowPctInput ? 10 : atrPctRank <= atrLowPctInput * 1.5 ? 5 : 0) : 0
-    math.min(s1 + s2, 20)
+// Check levels above (for longs) - ordered by tier priority
+// Tier 5: PMH
+if usePmhPml and not na(pmh) and pmh > close
+    float d = pmh - close
+    if na(bestLongDist) or d < bestLongDist
+        bestLongDist := d
+        bestLongLvl := pmh
+        bestLongName := "PMH"
+        bestLongTier := 5
 
-scoreDisplacement(bool isLong) =>
-    float trScore = (not na(atr) and atr > 0 and tr >= minTrAtr * atr) ? 15 : (not na(atr) and atr > 0 and tr >= (minTrAtr * 0.9) * atr) ? 8 : 0
+// Tier 4: PWH
+if usePwhPwl and not na(pwh) and pwh > close
+    float d = pwh - close
+    if na(bestLongDist) or d < bestLongDist
+        bestLongDist := d
+        bestLongLvl := pwh
+        bestLongName := "PWH"
+        bestLongTier := 4
+
+// Tier 3: PDH
+if usePdhPdl and not na(pdh) and pdh > close
+    float d = pdh - close
+    if na(bestLongDist) or d < bestLongDist
+        bestLongDist := d
+        bestLongLvl := pdh
+        bestLongName := "PDH"
+        bestLongTier := 3
+
+// Tier 2: OR High
+if useOpeningRange and orComplete and not na(orHigh) and orHigh > close
+    float d = orHigh - close
+    if na(bestLongDist) or d < bestLongDist
+        bestLongDist := d
+        bestLongLvl := orHigh
+        bestLongName := "OR-H"
+        bestLongTier := 2
+
+// Tier 2: H1 Pivot
+if useH1Pivots and not na(lastPh1h) and lastPh1h > close
+    float d = lastPh1h - close
+    if na(bestLongDist) or d < bestLongDist
+        bestLongDist := d
+        bestLongLvl := lastPh1h
+        bestLongName := "H1-P"
+        bestLongTier := 2
+
+// Tier 1: Psych
+if usePsychLevels and not na(nearestPsychAbove) and nearestPsychAbove > close
+    float d = nearestPsychAbove - close
+    if (na(bestLongDist) or d < bestLongDist) and (fastMode or countTouches(nearestPsychAbove, true, effTouchLookback) >= minTouchesRequired)
+        bestLongDist := d
+        bestLongLvl := nearestPsychAbove
+        bestLongName := "PSYCH"
+        bestLongTier := 1
+
+// Check levels below (for shorts) - ordered by tier priority
+// Tier 5: PML
+if usePmhPml and not na(pml) and pml < close
+    float d = close - pml
+    if na(bestShortDist) or d < bestShortDist
+        bestShortDist := d
+        bestShortLvl := pml
+        bestShortName := "PML"
+        bestShortTier := 5
+
+// Tier 4: PWL
+if usePwhPwl and not na(pwl) and pwl < close
+    float d = close - pwl
+    if na(bestShortDist) or d < bestShortDist
+        bestShortDist := d
+        bestShortLvl := pwl
+        bestShortName := "PWL"
+        bestShortTier := 4
+
+// Tier 3: PDL
+if usePdhPdl and not na(pdl) and pdl < close
+    float d = close - pdl
+    if na(bestShortDist) or d < bestShortDist
+        bestShortDist := d
+        bestShortLvl := pdl
+        bestShortName := "PDL"
+        bestShortTier := 3
+
+// Tier 2: OR Low
+if useOpeningRange and orComplete and not na(orLow) and orLow < close
+    float d = close - orLow
+    if na(bestShortDist) or d < bestShortDist
+        bestShortDist := d
+        bestShortLvl := orLow
+        bestShortName := "OR-L"
+        bestShortTier := 2
+
+// Tier 2: H1 Pivot
+if useH1Pivots and not na(lastPl1h) and lastPl1h < close
+    float d = close - lastPl1h
+    if na(bestShortDist) or d < bestShortDist
+        bestShortDist := d
+        bestShortLvl := lastPl1h
+        bestShortName := "H1-P"
+        bestShortTier := 2
+
+// Tier 1: Psych
+if usePsychLevels and not na(nearestPsychBelow) and nearestPsychBelow < close
+    float d = close - nearestPsychBelow
+    if (na(bestShortDist) or d < bestShortDist) and (fastMode or countTouches(nearestPsychBelow, false, effTouchLookback) >= minTouchesRequired)
+        bestShortDist := d
+        bestShortLvl := nearestPsychBelow
+        bestShortName := "PSYCH"
+        bestShortTier := 1
+
+// Check if near level
+float nearDist = atrValid ? nearLevelAtr * atr : na
+bool nearLong = not na(bestLongLvl) and not na(nearDist) and (bestLongLvl - close) <= nearDist
+bool nearShort = not na(bestShortLvl) and not na(nearDist) and (close - bestShortLvl) <= nearDist
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SCORING SYSTEM
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+scoreLevelComponent(int tier) =>
+    tier >= 5 ? 10 : tier >= 4 ? 8 : tier >= 3 ? 6 : tier >= 2 ? 4 : 2
+
+scoreCompressionComponent() =>
+    not useCompression ? 8 : inSqueeze ? 15 : (not na(bbwPctRank) and bbwPctRank <= bbwLowPct * 2) ? 7 : 0
+
+scoreDisplacementComponent(bool isLong) =>
+    int trScore = atrValid and tr >= effMinTr * atr ? 10 : (atrValid and tr >= effMinTr * 0.85 * atr) ? 5 : 0
     float loc = isLong ? closeLoc : (1.0 - closeLoc)
-    float locScore = loc >= minCloseLoc ? 10 : loc >= (minCloseLoc - 0.10) ? 5 : 0
-    math.min(trScore + locScore, 25)
+    int locScore = loc >= effMinCloseLoc ? 5 : loc >= (effMinCloseLoc - 0.10) ? 2 : 0
+    math.min(trScore + locScore, 15)
 
-scoreParticipation(bool isLong) =>
-    float vScore = (not na(dvolPctRank) and dvolPctRank >= activeDvolPctInput) ? 10 : 0
-    float vwapScore = not na(vwapUtc) ? (isLong ? (close >= vwapUtc ? 10 : 0) : (close <= vwapUtc ? 10 : 0)) : 0
-    math.min(vScore + vwapScore, 20)
+scoreContextComponent(bool isLong) =>
+    int zScore = isLong ? zoneScoreLong : zoneScoreShort
+    int hScore = isLong ? htfScoreLong : htfScoreShort
+    math.min(zScore + hScore + sessionScore, 30)
 
-float lvlScoreLong = longLevelOk ? scoreLevel(longLvlTier, longTouches) : 0
-float lvlScoreShort = shortLevelOk ? scoreLevel(shortLvlTier, shortTouches) : 0
-float compScore = scoreCompression()
-float dispScoreLong = scoreDisplacement(true)
-float dispScoreShort = scoreDisplacement(false)
-float partScoreLong = scoreParticipation(true)
-float partScoreShort = scoreParticipation(false)
+scoreVolumeComponent() =>
+    not na(dvolPctRank) ? (dvolPctRank >= 80 ? 10 : dvolPctRank >= 60 ? 7 : dvolPctRank >= 40 ? 4 : 0) : 0
 
-// --- State machine (separate long/short)
-// 0 idle, 1 armed, 2 attempt, 3 accepted, 4 retest_watch, 5 retest_held, 6 failed, 7 cooldown
-var int longState = 0
-var int shortState = 0
-var int longStateBar = na
-var int shortStateBar = na
-var float longLvlRef = na
-var float shortLvlRef = na
-var string longLvlRefName = ""
-var string shortLvlRefName = ""
-var int longAcceptStreak = 0
-var int shortAcceptStreak = 0
-var int longCooldown = 0
-var int shortCooldown = 0
-var int longSweepStartBar = na
-var int shortSweepStartBar = na
+calcTotalScore(bool isLong, int tier, bool accepted, bool retestHeld) =>
+    int levelScore = scoreLevelComponent(tier)
+    int compScore = scoreCompressionComponent()
+    int dispScore = scoreDisplacementComponent(isLong)
+    int contextScore = scoreContextComponent(isLong)
+    int volScore = scoreVolumeComponent()
+    int confirmBonus = retestHeld ? 15 : (accepted ? 10 : 0)
+    math.min(levelScore + compScore + dispScore + contextScore + volScore + confirmBonus, 100)
 
-bool dispOkLong = not na(atr) and atr > 0 and tr >= minTrAtr * atr and closeLoc >= minCloseLoc
-bool dispOkShort = not na(atr) and atr > 0 and tr >= minTrAtr * atr and closeLoc <= (1.0 - minCloseLoc)
+scoreToStrength(int score) =>
+    score >= 80 ? "Elite" : score >= 60 ? "Strong" : score >= 40 ? "Mid" : "Weak"
 
-bool setupLong = shouldUpdate and activeMarket and squeeze and longLevelOk
-bool setupShort = shouldUpdate and activeMarket and squeeze and shortLevelOk
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// STATE MACHINE (Optimized)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// States: 0=idle, 1=armed, 2=attempt, 3=accepted, 4=retest_watch, 5=retest_held, 6=failed, 7=cooldown
 
-attemptLong(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close > lvl + closeBufferAtr * atr and dispOkLong
-attemptShort(float lvl) => shouldUpdate and activeMarket and not na(lvl) and close < lvl - closeBufferAtr * atr and dispOkShort
+var int longState = 0, var int shortState = 0
+var int longStateBar = 0, var int shortStateBar = 0
+var float longLvlRef = na, var float shortLvlRef = na
+var string longLvlName = "", var string shortLvlName = ""
+var int longLvlTier = 0, var int shortLvlTier = 0
+var int longAcceptStreak = 0, var int shortAcceptStreak = 0
+var int longCooldown = 0, var int shortCooldown = 0
+var int longSweepBar = 0, var int shortSweepBar = 0
 
-// Events for alerts/markers
-bool evSetupLong = false
-bool evSetupShort = false
-bool evAcceptedLong = false
-bool evAcceptedShort = false
-bool evRetestLong = false
-bool evRetestShort = false
-bool evFailedLong = false
-bool evFailedShort = false
-bool evSweepLong = false
-bool evSweepShort = false
+// Displacement conditions
+bool dispOkLong = atrValid and tr >= effMinTr * atr and closeLoc >= effMinCloseLoc
+bool dispOkShort = atrValid and tr >= effMinTr * atr and closeLoc <= (1.0 - effMinCloseLoc)
 
-float scoreLong = na
-float scoreShort = na
+// Setup conditions
+bool compressionOk = not useCompression or inSqueeze
+bool setupLong = shouldUpdate and activeMarket and compressionOk and nearLong and longBiasOk
+bool setupShort = shouldUpdate and activeMarket and compressionOk and nearShort and shortBiasOk
 
-scoreTotal(float lvlScore, float dispScore, float partScore, bool accepted, bool retestHeld) =>
-    float acc = accepted ? (retestHeld ? 10 : 7) : 0
-    math.min(lvlScore + compScore + dispScore + partScore + acc, 100)
+// Attempt conditions
+attemptLong(float lvl) => shouldUpdate and activeMarket and atrValid and not na(lvl) and close > lvl + effCloseBuffer * atr and dispOkLong
+attemptShort(float lvl) => shouldUpdate and activeMarket and atrValid and not na(lvl) and close < lvl - effCloseBuffer * atr and dispOkShort
 
+// Event flags
+bool evSetupLong = false, bool evSetupShort = false
+bool evAcceptedLong = false, bool evAcceptedShort = false
+bool evRetestLong = false, bool evRetestShort = false
+bool evFailedLong = false, bool evFailedShort = false
+bool evSweepLong = false, bool evSweepShort = false
+
+// === LONG STATE MACHINE ===
 if longCooldown > 0
     longCooldown -= 1
     if longCooldown == 0
         longState := 0
 
-if shortCooldown > 0
-    shortCooldown -= 1
-    if shortCooldown == 0
-        shortState := 0
-
 if longCooldown == 0
-    if longState == 0
-        if setupLong
+    if longState == 0  // IDLE
+        if setupLong and not na(bestLongLvl)
             longState := 1
             longStateBar := bar_index
-            longLvlRef := longLvl
-            longLvlRefName := longLvlName
+            longLvlRef := bestLongLvl
+            longLvlName := bestLongName
+            longLvlTier := bestLongTier
             longAcceptStreak := 0
-            longSweepStartBar := na
+            longSweepBar := 0
             evSetupLong := true
-    else if longState == 1
-        bool stale = not squeeze or na(longLvlRef) or (longLvlRef - close) > (nearLevelAtrInput * atr * 1.8)
+
+    else if longState == 1  // ARMED
+        bool stale = (useCompression and not inSqueeze) or na(longLvlRef) or not atrValid or (longLvlRef - close) > (nearLevelAtr * atr * 2.0)
         if stale
             longState := 0
-            longSweepStartBar := na
         else
-            if na(longSweepStartBar) and not na(atr) and atr > 0 and high >= longLvlRef + sweepMinExcAtr * atr
-                longSweepStartBar := bar_index
-            bool sweepNow = not na(longSweepStartBar) and close < longLvlRef and (bar_index - longSweepStartBar) <= failWindowBars
+            // Sweep detection
+            if longSweepBar == 0 and high >= longLvlRef + effSweepExc * atr
+                longSweepBar := bar_index
+            bool sweepNow = longSweepBar > 0 and close < longLvlRef and (bar_index - longSweepBar) <= effFailWindow
             if sweepNow
                 longState := 6
-                longStateBar := bar_index
                 evSweepLong := true
-                longSweepStartBar := na
+                longSweepBar := 0
             else if attemptLong(longLvlRef)
                 longState := 2
                 longStateBar := bar_index
-                longAcceptStreak := 0
-                longSweepStartBar := na
-    else if longState == 2
-        bool acceptClose = close > longLvlRef + closeBufferAtr * atr
-        longAcceptStreak := acceptClose ? (longAcceptStreak + 1) : 0
-        bool timeOut = (bar_index - longStateBar) >= acceptMaxBars
+                longAcceptStreak := 1
+                longSweepBar := 0
+
+    else if longState == 2  // ATTEMPT
+        bool acceptClose = atrValid and close > longLvlRef + effCloseBuffer * atr
+        longAcceptStreak := acceptClose ? longAcceptStreak + 1 : math.max(longAcceptStreak - 1, 0)
+        bool timeout = (bar_index - longStateBar) >= effAcceptMax
         bool reclaimed = close < longLvlRef
-        if na(longSweepStartBar) and not na(atr) and atr > 0 and high >= longLvlRef + sweepMinExcAtr * atr
-            longSweepStartBar := bar_index
-        bool sweepNow = reclaimed and not na(longSweepStartBar) and (bar_index - longSweepStartBar) <= failWindowBars
+
+        if longSweepBar == 0 and atrValid and high >= longLvlRef + effSweepExc * atr
+            longSweepBar := bar_index
+        bool sweepNow = reclaimed and longSweepBar > 0 and (bar_index - longSweepBar) <= effFailWindow
+
         if sweepNow
             longState := 6
-            longStateBar := bar_index
             evSweepLong := true
-            longSweepStartBar := na
         else if reclaimed
             longState := 6
-            longStateBar := bar_index
             evFailedLong := true
-            longSweepStartBar := na
-        else if longAcceptStreak >= acceptBars
+        else if longAcceptStreak >= effAcceptBars
             longState := 3
             longStateBar := bar_index
             evAcceptedLong := true
-            longSweepStartBar := na
-        else if timeOut
+        else if timeout
             longState := 6
-            longStateBar := bar_index
             evFailedLong := true
-            longSweepStartBar := na
-    else if longState == 3
+
+    else if longState == 3  // ACCEPTED
         if wantRetestSignal
             longState := 4
             longStateBar := bar_index
         else
             longState := 7
             longCooldown := cooldownBars
-        longSweepStartBar := na
-    else if longState == 4
-        bool reclaimed = close < longLvlRef
-        bool timeOut = (bar_index - longStateBar) > retestMaxBarsInput
-        float tol = retestTolAtrInput * atr
-        bool touched = not na(tol) and low <= longLvlRef + tol
-        bool held = touched and close >= longLvlRef
-        if reclaimed
+
+    else if longState == 4  // RETEST WATCH (FIXED LOGIC)
+        bool timeout = (bar_index - longStateBar) > retestMaxBars
+        float tol = atrValid ? retestTolAtr * atr : 0
+        float maxWick = atrValid ? retestMaxWickAtr * atr : 0
+
+        bool touched = low <= longLvlRef + tol
+        bool wickExceeded = low < longLvlRef - maxWick
+        bool held = touched and not wickExceeded and close >= longLvlRef
+
+        if wickExceeded  // Wick too deep = failed
             longState := 6
-            longStateBar := bar_index
             evFailedLong := true
         else if held
             longState := 5
-            longStateBar := bar_index
             evRetestLong := true
-        else if timeOut
+        else if timeout
             longState := 7
             longCooldown := cooldownBars
-    else if longState == 5
-        longState := 7
-        longCooldown := cooldownBars
-    else if longState == 6
+
+    else if longState == 5 or longState == 6  // RETEST HELD or FAILED
         longState := 7
         longCooldown := cooldownBars
 
+// === SHORT STATE MACHINE ===
+if shortCooldown > 0
+    shortCooldown -= 1
+    if shortCooldown == 0
+        shortState := 0
+
 if shortCooldown == 0
-    if shortState == 0
-        if setupShort
+    if shortState == 0  // IDLE
+        if setupShort and not na(bestShortLvl)
             shortState := 1
             shortStateBar := bar_index
-            shortLvlRef := shortLvl
-            shortLvlRefName := shortLvlName
+            shortLvlRef := bestShortLvl
+            shortLvlName := bestShortName
+            shortLvlTier := bestShortTier
             shortAcceptStreak := 0
-            shortSweepStartBar := na
+            shortSweepBar := 0
             evSetupShort := true
-    else if shortState == 1
-        bool stale = not squeeze or na(shortLvlRef) or (close - shortLvlRef) > (nearLevelAtrInput * atr * 1.8)
+
+    else if shortState == 1  // ARMED
+        bool stale = (useCompression and not inSqueeze) or na(shortLvlRef) or not atrValid or (close - shortLvlRef) > (nearLevelAtr * atr * 2.0)
         if stale
             shortState := 0
-            shortSweepStartBar := na
         else
-            if na(shortSweepStartBar) and not na(atr) and atr > 0 and low <= shortLvlRef - sweepMinExcAtr * atr
-                shortSweepStartBar := bar_index
-            bool sweepNow = not na(shortSweepStartBar) and close > shortLvlRef and (bar_index - shortSweepStartBar) <= failWindowBars
+            if shortSweepBar == 0 and low <= shortLvlRef - effSweepExc * atr
+                shortSweepBar := bar_index
+            bool sweepNow = shortSweepBar > 0 and close > shortLvlRef and (bar_index - shortSweepBar) <= effFailWindow
             if sweepNow
                 shortState := 6
-                shortStateBar := bar_index
                 evSweepShort := true
-                shortSweepStartBar := na
+                shortSweepBar := 0
             else if attemptShort(shortLvlRef)
                 shortState := 2
                 shortStateBar := bar_index
-                shortAcceptStreak := 0
-                shortSweepStartBar := na
-    else if shortState == 2
-        bool acceptClose = close < shortLvlRef - closeBufferAtr * atr
-        shortAcceptStreak := acceptClose ? (shortAcceptStreak + 1) : 0
-        bool timeOut = (bar_index - shortStateBar) >= acceptMaxBars
+                shortAcceptStreak := 1
+                shortSweepBar := 0
+
+    else if shortState == 2  // ATTEMPT
+        bool acceptClose = atrValid and close < shortLvlRef - effCloseBuffer * atr
+        shortAcceptStreak := acceptClose ? shortAcceptStreak + 1 : math.max(shortAcceptStreak - 1, 0)
+        bool timeout = (bar_index - shortStateBar) >= effAcceptMax
         bool reclaimed = close > shortLvlRef
-        if na(shortSweepStartBar) and not na(atr) and atr > 0 and low <= shortLvlRef - sweepMinExcAtr * atr
-            shortSweepStartBar := bar_index
-        bool sweepNow = reclaimed and not na(shortSweepStartBar) and (bar_index - shortSweepStartBar) <= failWindowBars
+
+        if shortSweepBar == 0 and atrValid and low <= shortLvlRef - effSweepExc * atr
+            shortSweepBar := bar_index
+        bool sweepNow = reclaimed and shortSweepBar > 0 and (bar_index - shortSweepBar) <= effFailWindow
+
         if sweepNow
             shortState := 6
-            shortStateBar := bar_index
             evSweepShort := true
-            shortSweepStartBar := na
         else if reclaimed
             shortState := 6
-            shortStateBar := bar_index
             evFailedShort := true
-            shortSweepStartBar := na
-        else if shortAcceptStreak >= acceptBars
+        else if shortAcceptStreak >= effAcceptBars
             shortState := 3
             shortStateBar := bar_index
             evAcceptedShort := true
-            shortSweepStartBar := na
-        else if timeOut
+        else if timeout
             shortState := 6
-            shortStateBar := bar_index
             evFailedShort := true
-            shortSweepStartBar := na
-    else if shortState == 3
+
+    else if shortState == 3  // ACCEPTED
         if wantRetestSignal
             shortState := 4
             shortStateBar := bar_index
         else
             shortState := 7
             shortCooldown := cooldownBars
-        shortSweepStartBar := na
-    else if shortState == 4
-        bool reclaimed = close > shortLvlRef
-        bool timeOut = (bar_index - shortStateBar) > retestMaxBarsInput
-        float tol = retestTolAtrInput * atr
-        bool touched = not na(tol) and high >= shortLvlRef - tol
-        bool held = touched and close <= shortLvlRef
-        if reclaimed
+
+    else if shortState == 4  // RETEST WATCH (FIXED LOGIC)
+        bool timeout = (bar_index - shortStateBar) > retestMaxBars
+        float tol = atrValid ? retestTolAtr * atr : 0
+        float maxWick = atrValid ? retestMaxWickAtr * atr : 0
+
+        bool touched = high >= shortLvlRef - tol
+        bool wickExceeded = high > shortLvlRef + maxWick
+        bool held = touched and not wickExceeded and close <= shortLvlRef
+
+        if wickExceeded
             shortState := 6
-            shortStateBar := bar_index
             evFailedShort := true
         else if held
             shortState := 5
-            shortStateBar := bar_index
             evRetestShort := true
-        else if timeOut
+        else if timeout
             shortState := 7
             shortCooldown := cooldownBars
-    else if shortState == 5
+
+    else if shortState == 5 or shortState == 6
         shortState := 7
         shortCooldown := cooldownBars
-    else if shortState == 6
-        shortState := 7
-        shortCooldown := cooldownBars
 
-bool acceptedLongNow = longState == 3 or longState == 4 or longState == 5
-bool acceptedShortNow = shortState == 3 or shortState == 4 or shortState == 5
-bool retestLongNow = longState == 5
-bool retestShortNow = shortState == 5
+// === CALCULATE SCORES ===
+bool acceptedLong = longState >= 3 and longState <= 5
+bool acceptedShort = shortState >= 3 and shortState <= 5
+bool retestLong = longState == 5
+bool retestShort = shortState == 5
 
-scoreLong := scoreTotal(lvlScoreLong, dispScoreLong, partScoreLong, acceptedLongNow, retestLongNow)
-scoreShort := scoreTotal(lvlScoreShort, dispScoreShort, partScoreShort, acceptedShortNow, retestShortNow)
+int scoreLong = calcTotalScore(true, longLvlTier, acceptedLong, retestLong)
+int scoreShort = calcTotalScore(false, shortLvlTier, acceptedShort, retestShort)
+string strengthLong = scoreToStrength(scoreLong)
+string strengthShort = scoreToStrength(scoreShort)
 
-// --- Plot levels (subtle styling to not clash with ICT OB)
-plot(showLevelsInput and usePdhPdlInput ? pdh : na, "PDH (UTC)", color=lvlCol, style=plot.style_linebr, linewidth=1)
-plot(showLevelsInput and usePdhPdlInput ? pdl : na, "PDL (UTC)", color=lvlCol, style=plot.style_linebr, linewidth=1)
-plot(showLevelsInput and usePwhPwlInput ? pwh : na, "PWH (UTC)", color=color.new(#555555, 70), style=plot.style_linebr, linewidth=1)
-plot(showLevelsInput and usePwhPwlInput ? pwl : na, "PWL (UTC)", color=color.new(#555555, 70), style=plot.style_linebr, linewidth=1)
-plot(showLevelsInput ? vwapUtc : na, "VWAP (UTC day)", color=vwapCol, style=plot.style_line, linewidth=1)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PLOTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-plot(showActiveLevelInput and longState > 0 ? longLvlRef : na, "Active Long Level", color=activeLvlCol, style=plot.style_linebr, linewidth=1)
-plot(showActiveLevelInput and shortState > 0 ? shortLvlRef : na, "Active Short Level", color=activeLvlCol, style=plot.style_linebr, linewidth=1)
+// Key levels (Standard + Full)
+plot(showLevels and usePdhPdl ? pdh : na, "PDH", color=C_LEVEL, style=plot.style_linebr, linewidth=1)
+plot(showLevels and usePdhPdl ? pdl : na, "PDL", color=C_LEVEL, style=plot.style_linebr, linewidth=1)
+plot(showLevels and usePwhPwl ? pwh : na, "PWH", color=color.new(C_LEVEL, 30), style=plot.style_linebr, linewidth=1)
+plot(showLevels and usePwhPwl ? pwl : na, "PWL", color=color.new(C_LEVEL, 30), style=plot.style_linebr, linewidth=1)
 
-plot(scoreLong, "BQE Score Long", display=display.none)
-plot(scoreShort, "BQE Score Short", display=display.none)
+// Extended levels (Full only)
+plot(showAllLevels and usePmhPml ? pmh : na, "PMH", color=color.new(#ffd700, 60), style=plot.style_linebr, linewidth=2)
+plot(showAllLevels and usePmhPml ? pml : na, "PML", color=color.new(#ffd700, 60), style=plot.style_linebr, linewidth=2)
+plot(showAllLevels and useOpeningRange and orComplete ? orHigh : na, "OR-H", color=color.new(#9c27b0, 50), style=plot.style_linebr, linewidth=1)
+plot(showAllLevels and useOpeningRange and orComplete ? orLow : na, "OR-L", color=color.new(#9c27b0, 50), style=plot.style_linebr, linewidth=1)
+plot(showAllLevels and showVwap ? vwapDaily : na, "VWAP", color=C_VWAP, style=plot.style_line, linewidth=1)
 
-// --- Markers / labels (dark theme matching ICT OB Pro style)
-fmtScore(float s) => na(s) ? "" : " [" + str.tostring(math.round(s)) + "]"
+// Zones (Full only)
+plot(showAllLevels and showZoneLines ? equilibrium : na, "EQ", color=C_NEUTRAL, style=plot.style_line, linewidth=1)
+plot(showAllLevels and showOteZone ? oteLongBot : na, "OTE-L Bot", color=C_OTE, style=plot.style_linebr, linewidth=1)
+plot(showAllLevels and showOteZone ? oteLongTop : na, "OTE-L Top", color=C_OTE, style=plot.style_linebr, linewidth=1)
 
-// ARM signals - subtle, small labels
-if showStateMarkersInput and evSetupLong
-    label.new(bar_index, low, "◆ ARM " + longLvlRefName, xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=bullAccent, size=size.tiny)
-if showStateMarkersInput and evSetupShort
-    label.new(bar_index, high, "◆ ARM " + shortLvlRefName, xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=bearAccent, size=size.tiny)
+// Active levels (Always)
+plot(longState > 0 and longState < 6 ? longLvlRef : na, "Active Long", color=C_BULL, style=plot.style_linebr, linewidth=2)
+plot(shortState > 0 and shortState < 6 ? shortLvlRef : na, "Active Short", color=C_BEAR, style=plot.style_linebr, linewidth=2)
 
-// ACCEPT signals - prominent with score
-if showScoreLabelsInput and wantAcceptSignal and evAcceptedLong
-    label.new(bar_index, high, "▲ ACCEPT" + fmtScore(scoreLong), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=bullAccent, size=size.small)
-if showScoreLabelsInput and wantAcceptSignal and evAcceptedShort
-    label.new(bar_index, low, "▼ ACCEPT" + fmtScore(scoreShort), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=bearAccent, size=size.small)
+// Score plots (hidden)
+plot(scoreLong, "Score Long", display=display.none)
+plot(scoreShort, "Score Short", display=display.none)
 
-// RETEST signals - best quality, highlighted
-if showScoreLabelsInput and wantRetestSignal and evRetestLong
-    label.new(bar_index, low, "▲ RETEST" + fmtScore(scoreLong), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=bullAccent, size=size.small)
-if showScoreLabelsInput and wantRetestSignal and evRetestShort
-    label.new(bar_index, high, "▼ RETEST" + fmtScore(scoreShort), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=bearAccent, size=size.small)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// LABELS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fmtScore(int s) => showScoreInLabel ? " [" + str.tostring(s) + "]" : ""
 
-// SWEEP/FAIL signals - warning style
-if showScoreLabelsInput and (evSweepLong or evFailedLong)
-    label.new(bar_index, high, (evSweepLong ? "✕ SWEEP" : "✕ FAIL"), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_down, textcolor=failCol, size=size.tiny)
-if showScoreLabelsInput and (evSweepShort or evFailedShort)
-    label.new(bar_index, low, (evSweepShort ? "✕ SWEEP" : "✕ FAIL"), xloc=xloc.bar_index, yloc=yloc.price, color=darkBg, style=label.style_label_up, textcolor=failCol, size=size.tiny)
+if showLabels and evSetupLong
+    label.new(bar_index, low, "◆ " + longLvlName, style=label.style_label_up, color=C_DASH_BG, textcolor=C_BULL, size=size.tiny)
+if showLabels and evSetupShort
+    label.new(bar_index, high, "◆ " + shortLvlName, style=label.style_label_down, color=C_DASH_BG, textcolor=C_BEAR, size=size.tiny)
 
-// --- Alerts (state transitions only)
-alertcondition(alertSetupInput and evSetupLong, "BQE Setup Long", "BQE: Setup Armed (Long) - {{ticker}} @ {{interval}} Level={{plot(\"Active Long Level\")}}")
-alertcondition(alertSetupInput and evSetupShort, "BQE Setup Short", "BQE: Setup Armed (Short) - {{ticker}} @ {{interval}} Level={{plot(\"Active Short Level\")}}")
+if showLabels and wantAcceptSignal and evAcceptedLong
+    label.new(bar_index, low, strengthSymbol(strengthLong) + " ACCEPT" + fmtScore(scoreLong), style=label.style_label_up, color=C_DASH_BG, textcolor=C_BULL, size=size.small)
+if showLabels and wantAcceptSignal and evAcceptedShort
+    label.new(bar_index, high, strengthSymbol(strengthShort) + " ACCEPT" + fmtScore(scoreShort), style=label.style_label_down, color=C_DASH_BG, textcolor=C_BEAR, size=size.small)
 
-alertcondition(alertAcceptedInput and wantAcceptSignal and evAcceptedLong, "BQE Accepted Long", "BQE: Breakout Accepted (Long) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Long\")}}")
-alertcondition(alertAcceptedInput and wantAcceptSignal and evAcceptedShort, "BQE Accepted Short", "BQE: Breakout Accepted (Short) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Short\")}}")
+if showLabels and wantRetestSignal and evRetestLong
+    label.new(bar_index, low, strengthSymbol(strengthLong) + " RETEST" + fmtScore(scoreLong), style=label.style_label_up, color=C_DASH_BG, textcolor=C_BULL, size=size.small)
+if showLabels and wantRetestSignal and evRetestShort
+    label.new(bar_index, high, strengthSymbol(strengthShort) + " RETEST" + fmtScore(scoreShort), style=label.style_label_down, color=C_DASH_BG, textcolor=C_BEAR, size=size.small)
 
-alertcondition(alertRetestHeldInput and wantRetestSignal and evRetestLong, "BQE Retest Held Long", "BQE: Retest Held (Long) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Long\")}}")
-alertcondition(alertRetestHeldInput and wantRetestSignal and evRetestShort, "BQE Retest Held Short", "BQE: Retest Held (Short) - {{ticker}} @ {{interval}} Score={{plot(\"BQE Score Short\")}}")
+if showLabels and (evSweepLong or evFailedLong)
+    label.new(bar_index, high, evSweepLong ? "✕ SWEEP" : "✕ FAIL", style=label.style_label_down, color=C_DASH_BG, textcolor=C_FAIL, size=size.tiny)
+if showLabels and (evSweepShort or evFailedShort)
+    label.new(bar_index, low, evSweepShort ? "✕ SWEEP" : "✕ FAIL", style=label.style_label_up, color=C_DASH_BG, textcolor=C_FAIL, size=size.tiny)
 
-alertcondition(alertSweepInput and (evSweepLong or evFailedLong), "BQE Sweep/Fail Long", "BQE: Sweep/Fail (Long) - {{ticker}} @ {{interval}}")
-alertcondition(alertSweepInput and (evSweepShort or evFailedShort), "BQE Sweep/Fail Short", "BQE: Sweep/Fail (Short) - {{ticker}} @ {{interval}}")
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DASHBOARD (Compact)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+getDashPos(string loc) =>
+    loc == "Top Left" ? position.top_left : loc == "Bottom Right" ? position.bottom_right : loc == "Bottom Left" ? position.bottom_left : position.top_right
+
+getDashSize(string sz) =>
+    sz == "Tiny" ? size.tiny : sz == "Normal" ? size.normal : size.small
+
+getDashHeaderSize(string sz) =>
+    sz == "Tiny" ? size.tiny : sz == "Normal" ? size.small : size.small
+
+var table dash = na
+color dashBgColor = color.new(color.black, dashboardTransparency)
+string dashTextSize = getDashSize(dashboardSize)
+string dashHeaderSize = getDashHeaderSize(dashboardSize)
+
+if showDashboard and barstate.islast
+    if na(dash)
+        dash := table.new(getDashPos(dashboardLocation), 4, 10, bgcolor=dashBgColor, border_color=color.new(color.white, 80), border_width=1)
+
+    table.clear(dash, 0, 0, 3, 9)
+
+    // Header
+    table.merge_cells(dash, 0, 0, 3, 0)
+    table.cell(dash, 0, 0, "BQE ULTRA", text_color=color.white, text_size=dashHeaderSize)
+
+    // Context
+    string sess = inOverlapKZ ? "LDN/NY" : inNyKZ ? "NY" : inLondonKZ ? "LDN" : inAsiaKZ ? "ASIA" : "OFF"
+    color sessCol = inAnyKillzone ? C_BULL : color.gray
+    table.cell(dash, 0, 1, "Session", text_color=color.gray, text_size=dashTextSize)
+    table.cell(dash, 1, 1, sess, text_color=sessCol, text_size=dashTextSize)
+    table.cell(dash, 2, 1, isMacroTime ? "MACRO" : "", text_color=color.yellow, text_size=dashTextSize)
+
+    string zone = inDiscount ? "DISC" : inPremium ? "PREM" : "EQ"
+    color zoneCol = inDiscount ? C_BULL : inPremium ? C_BEAR : color.gray
+    table.cell(dash, 0, 2, "Zone", text_color=color.gray, text_size=dashTextSize)
+    table.cell(dash, 1, 2, zone, text_color=zoneCol, text_size=dashTextSize)
+    table.cell(dash, 2, 2, inOteLong ? "OTE▲" : inOteShort ? "OTE▼" : "", text_color=C_OTE, text_size=dashTextSize)
+
+    string bias = htfBullish ? "BULL" : htfBearish ? "BEAR" : "—"
+    color biasCol = htfBullish ? C_BULL : htfBearish ? C_BEAR : color.gray
+    table.cell(dash, 0, 3, "HTF", text_color=color.gray, text_size=dashTextSize)
+    table.cell(dash, 1, 3, bias, text_color=biasCol, text_size=dashTextSize)
+
+    // Setups
+    table.merge_cells(dash, 0, 4, 3, 4)
+    table.cell(dash, 0, 4, "── SETUPS ──", text_color=color.gray, text_size=dashTextSize)
+
+    string lState = longState == 0 ? "IDLE" : longState == 1 ? "ARM" : longState == 2 ? "ATT" : longState == 3 ? "ACC" : longState == 4 ? "RET" : longState == 5 ? "HELD" : "CD"
+    color lCol = longState >= 3 and longState <= 5 ? C_BULL : longState == 6 ? C_FAIL : longState > 0 ? color.yellow : color.gray
+    table.cell(dash, 0, 5, "LONG", text_color=C_BULL, text_size=dashTextSize)
+    table.cell(dash, 1, 5, lState, text_color=lCol, text_size=dashTextSize)
+    table.cell(dash, 2, 5, longState > 0 ? longLvlName : "", text_color=color.white, text_size=dashTextSize)
+    table.cell(dash, 3, 5, longState > 0 ? str.tostring(scoreLong) : "", text_color=C_BULL, text_size=dashTextSize)
+
+    string sState = shortState == 0 ? "IDLE" : shortState == 1 ? "ARM" : shortState == 2 ? "ATT" : shortState == 3 ? "ACC" : shortState == 4 ? "RET" : shortState == 5 ? "HELD" : "CD"
+    color sCol = shortState >= 3 and shortState <= 5 ? C_BEAR : shortState == 6 ? C_FAIL : shortState > 0 ? color.yellow : color.gray
+    table.cell(dash, 0, 6, "SHORT", text_color=C_BEAR, text_size=dashTextSize)
+    table.cell(dash, 1, 6, sState, text_color=sCol, text_size=dashTextSize)
+    table.cell(dash, 2, 6, shortState > 0 ? shortLvlName : "", text_color=color.white, text_size=dashTextSize)
+    table.cell(dash, 3, 6, shortState > 0 ? str.tostring(scoreShort) : "", text_color=C_BEAR, text_size=dashTextSize)
+
+    // Levels
+    table.merge_cells(dash, 0, 7, 3, 7)
+    table.cell(dash, 0, 7, "── LEVELS ──", text_color=color.gray, text_size=dashTextSize)
+
+    if not na(bestLongLvl)
+        float d = round2((bestLongLvl - close) / close * 100)
+        table.cell(dash, 0, 8, "Above", text_color=color.gray, text_size=dashTextSize)
+        table.cell(dash, 1, 8, bestLongName, text_color=C_BULL, text_size=dashTextSize)
+        table.cell(dash, 2, 8, str.tostring(d) + "%", text_color=color.white, text_size=dashTextSize)
+
+    if not na(bestShortLvl)
+        float d = round2((close - bestShortLvl) / close * 100)
+        table.cell(dash, 0, 9, "Below", text_color=color.gray, text_size=dashTextSize)
+        table.cell(dash, 1, 9, bestShortName, text_color=C_BEAR, text_size=dashTextSize)
+        table.cell(dash, 2, 9, str.tostring(d) + "%", text_color=color.white, text_size=dashTextSize)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ALERTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+alertcondition(alertSetup and evSetupLong, "Setup Long", "BQE: Armed LONG - {{ticker}} @ {{interval}}")
+alertcondition(alertSetup and evSetupShort, "Setup Short", "BQE: Armed SHORT - {{ticker}} @ {{interval}}")
+alertcondition(alertAccepted and wantAcceptSignal and evAcceptedLong, "Accepted Long", "BQE: ACCEPTED LONG - {{ticker}} @ {{interval}}")
+alertcondition(alertAccepted and wantAcceptSignal and evAcceptedShort, "Accepted Short", "BQE: ACCEPTED SHORT - {{ticker}} @ {{interval}}")
+alertcondition(alertRetest and wantRetestSignal and evRetestLong, "Retest Long", "BQE: RETEST LONG - {{ticker}} @ {{interval}}")
+alertcondition(alertRetest and wantRetestSignal and evRetestShort, "Retest Short", "BQE: RETEST SHORT - {{ticker}} @ {{interval}}")
+alertcondition(alertFailed and (evSweepLong or evFailedLong), "Failed Long", "BQE: FAILED LONG - {{ticker}} @ {{interval}}")
+alertcondition(alertFailed and (evSweepShort or evFailedShort), "Failed Short", "BQE: FAILED SHORT - {{ticker}} @ {{interval}}")

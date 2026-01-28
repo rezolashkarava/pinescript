@@ -1,9 +1,17 @@
 //@version=6
-indicator("ICT Order Block Pro [Paganie] v3.5.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("ICT Order Block Pro [Paganie] v3.6.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
-// ICT ORDER BLOCK PRO V3.5.0 - INSTITUTIONAL SMART MONEY CONCEPTS
+// ICT ORDER BLOCK PRO V3.6.0 - INSTITUTIONAL SMART MONEY CONCEPTS
 // Professional-grade order block detection with ICT/SMC methodology
+//
+// V3.6.0 - Locked Settings for Optimal Performance:
+// • Settings reduced to ~20 essential controls
+// • All algorithm parameters locked to optimal values
+// • Users can only adjust: Mode, Modules, Visuals, Alerts, Colors
+// • Detection, Zone, Strength, Liquidity params auto-optimized by timeframe
+// • Power Row always uses Auto mode with Pressure method
+// • Prevents users from accidentally degrading signal quality
 //
 // V3.5.0 - Enhanced Volume Classification:
 // • NEW: Buying/Selling Pressure method for Power Row (more accurate than Polarity)
@@ -89,238 +97,158 @@ int DIR_BEAR = -1
 
 // === INPUTS ===
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// SETTINGS MODE (Top-Level Control)
+// MODE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-settingsMode = input.string("Auto", "Settings Mode", options=["Auto", "Manual"], group="⚙️ Settings Mode",
-     tooltip="AUTO: Optimizes all settings based on timeframe for stability and performance.\nMANUAL: Full control over all settings (advanced users).")
-signalTiming = input.string("Realtime (intrabar)", "Signal Timing", options=["Realtime (intrabar)", "Confirmed (bar close)"], group="⚙️ Settings Mode",
-     tooltip="REALTIME: Updates signals on every tick (faster but may flicker).\nCONFIRMED: Updates signals only on bar close (more stable, no repainting).")
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// BASIC SETTINGS
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-// Mode Selection (Legacy - ignored when settingsMode="Auto")
-autoMode = input.bool(true, "Auto-Adjust for Timeframe", group="⚙️ Mode", tooltip="Automatically optimizes settings based on current timeframe\n\n⚠️ When Settings Mode is 'Auto', this is ignored (Auto mode always uses timeframe-based settings).")
-manualPreset = input.string("Scalping", "Manual Preset", options=["Scalping", "Swing", "Position"], group="⚙️ Mode")
-
-// Detection Method Selection
-detectionMethod = input.string("Scalper", "Detection Method", options=["Institutional", "Scalper"], group="⚙️ Mode", 
-     tooltip="[Institutional] Pivot-based with institutional filters (stricter, fewer signals)\n[Scalper] Pattern-based detection optimized for scalping (more signals, faster response)")
-scalperLookback = input.int(10, "Scalper Lookback", minval=2, maxval=30, group="⚙️ Mode", 
-     tooltip="Lookback period for Scalper detection method")
-
-// Detection Settings
-obLookback = input.int(5, "Swing Detection Period", minval=3, maxval=20, group="Detection")
-blockSizing = input.string("Smart", "Block Sizing", options=["Smart", "Body Only", "Full Range"], group="Detection", tooltip="Smart: ATR-adjusted for scalping, Body for others")
-gridSegments = input.int(10, "Volume Grid Segments", minval=5, maxval=20, group="Detection", 
-     tooltip="Number of gradient layers per block. Higher = smoother visuals but more objects.\nWARNING: Each block creates ~12-15 objects (boxes/lines/labels). With maxBlocks=10 and gridSegments=20, you may hit object limits (500 boxes/500 lines max).")
-
-// Validation Filters (Auto-adjust based on TF)
-useDisplacement = input.bool(true, "Displacement Filter", group="Filters")
-useFVG = input.bool(true, "Fair Value Gap Filter", group="Filters")
-useMSB = input.bool(true, "Structure Break Filter", group="Filters")
-useVolume = input.bool(true, "Volume Confirmation", group="Filters")
-
-// Mean Reversion Settings
-enableRejection = input.bool(true, "Track Rejections", group="Mean Reversion", tooltip="Detects bounces off order blocks")
-showRetests = input.bool(true, "Show Retest Count", group="Mean Reversion")
-
-// === LIQUIDITY SWEEP SETTINGS ===
-enableLiquidity = input.bool(false, "🔓 Enable Liquidity Module", group="Liquidity Sweeps",
-     tooltip="MASTER TOGGLE: Enable liquidity sweep detection.\nWhen OFF, no liquidity lines/boxes/labels or alerts are created.\nEnable this to use BSL/SSL tracking, sweep detection, and liquidity alerts.")
-showLiquidityLevels = input.bool(false, "Show Liquidity Levels", group="Liquidity Sweeps",
-     tooltip="Display horizontal lines at swing high/low liquidity levels")
-showSweepEvents = input.bool(true, "Mark Sweep Events", group="Liquidity Sweeps",
-     tooltip="Mark when price sweeps liquidity and reverses")
-showLiquidityRuns = input.bool(false, "Mark Liquidity Runs", group="Liquidity Sweeps",
-     tooltip="Also mark when price takes liquidity and CONTINUES (trend continuation)")
-markEqualHL = input.bool(true, "Highlight Equal Highs/Lows", group="Liquidity Sweeps",
-     tooltip="Mark clustered swing levels where more stops accumulate")
-sweepLookback = input.int(20, "Swing Lookback", minval=5, maxval=50, group="Liquidity Sweeps",
-     tooltip="Bars to identify swing highs/lows for liquidity pools")
-equalHLThreshold = input.float(0.1, "Equal High/Low Threshold %", minval=0.0, maxval=1.0, group="Liquidity Sweeps",
-     tooltip="Price range (%) to consider highs/lows as 'equal' (clustered liquidity)")
-sweepWickMin = input.float(0.5, "Min Sweep Wick (ATR mult)", minval=0.1, maxval=2.0, group="Liquidity Sweeps",
-     tooltip="Minimum wick beyond level to qualify as sweep")
-requireVolumeSpike = input.bool(true, "Require Volume Spike", group="Liquidity Sweeps",
-     tooltip="Sweep candle must have above-average volume")
-maxLiquidityLevelsInput = input.int(6, "Max Levels per Side", minval=2, maxval=12, group="Liquidity Sweeps")
-
-// Liquidity Visual Colors
-bslColor = input.color(color.new(#00bfff, 30), "BSL Level Color", group="Liquidity Colors")
-sslColor = input.color(color.new(#ff6600, 30), "SSL Level Color", group="Liquidity Colors")
-sweepBullColor = input.color(color.new(#00ff88, 20), "Bullish Sweep", group="Liquidity Colors")
-sweepBearColor = input.color(color.new(#ff3366, 20), "Bearish Sweep", group="Liquidity Colors")
-
-// Liquidity Alerts (only active when enableLiquidity is true)
-alertLiquiditySweep = input.bool(false, "Alert on Sweep", group="Alerts",
-     tooltip="Alert when liquidity is swept (requires Enable Liquidity Module)")
-alertLiquidityRun = input.bool(false, "Alert on Run (Continuation)", group="Alerts",
-     tooltip="Alert when price takes liquidity and CONTINUES in direction (requires Enable Liquidity Module)")
-alertApproachingLiquidity = input.bool(false, "Alert Approaching Liquidity", group="Alerts",
-     tooltip="Alert when price approaches liquidity levels (requires Enable Liquidity Module)")
-liquidityProximityPct = input.float(0.5, "Liquidity Proximity %", minval=0.1, maxval=3.0, group="Alerts")
-
-// Alert Settings
-alertNewOB = input.bool(true, "Alert on New OB", group="Alerts", tooltip="Alert when new order blocks are detected")
-alertTouch = input.bool(true, "Alert on Touch", group="Alerts", tooltip="Alert when price enters an order block zone")
-alertReject = input.bool(true, "Alert on Rejection", group="Alerts", tooltip="Alert when price rejects from an order block")
-
-// Proximity Alert Settings
-proximityAlertEnabled = input.bool(true, "🎯 Enable Proximity Alerts", group="Alerts", tooltip="Alert when price approaches nearest OB zones")
-proximityThreshold = input.float(1.0, "Proximity Distance %", minval=0.1, maxval=5.0, step=0.1, group="Alerts", 
-     tooltip="Alert when price is within this % of an OB zone\nScalping: 0.5-1% | Swing: 1-2% | Position: 2-3%")
-alertOnlyStrongBlocks = input.bool(true, "Proximity: Only Strong/Elite", group="Alerts", tooltip="Only alert for high-quality order blocks")
-alertOnlyFreshBlocks = input.bool(false, "Proximity: Only Fresh (Untested)", group="Alerts", tooltip="Only alert for zones with no prior retests")
-requireDirectionalApproach = input.bool(true, "Require Directional Approach", group="Alerts", 
-     tooltip="Bull OB: alert only when price falling\nBear OB: alert only when price rising\nMakes alerts more actionable")
-
-// Premium Features (Requires TradingView Premium)
-useVolumeProfile = input.bool(true, "📊 Volume Profile Enhancement", group="🔥 Premium Features", 
-     tooltip="Requires TradingView Premium\nBoosts order blocks that align with high-volume price zones\nIdentifies institutional accumulation/distribution areas\n\n✅ AUTO-SCALING (v2.4): When Auto-Adjust is ON, VP lookback automatically scales with timeframe (1m→60, 5m→100, 1h→200) for optimal performance.\n\n✅ ENABLED BY DEFAULT (v3.4+): VP is now ON by default for enhanced signal quality.")
-vpLookback = input.int(100, "VP Analysis Period", minval=20, maxval=500, group="🔥 Premium Features",
-     tooltip="Maximum bars to analyze for volume distribution\n\n✅ AUTO-SCALING: With Auto-Adjust ON, this acts as a CAP. Script auto-reduces on lower timeframes:\n• 1m chart → 60 bars (or your setting, whichever is lower)\n• 5m chart → 100 bars\n• 1h chart → 200 bars\n• 4h+ chart → 300 bars\n\nManual mode always uses your exact value.")
-vpThreshold = input.float(1.5, "VP Strength Multiplier", minval=1.0, maxval=3.0, step=0.1, group="🔥 Premium Features",
-     tooltip="Volume threshold for confirmation (1.5 = 150% of average volume)")
-
-// Visual Settings
-showStrength = input.bool(true, "Show Strength Rating", group="Visuals")
-showVolLabel = input.bool(true, "Show Volume Labels", group="Visuals")
-showDashboard = input.bool(true, "Show Dashboard", group="Visuals")
-dashboardLocation = input.string("Top Right", "Dashboard Location", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Visuals",
-     tooltip="Position of the dashboard on the chart")
-dashboardTransparency = input.int(10, "Dashboard Transparency", minval=0, maxval=90, step=5, group="Visuals",
-     tooltip="Background transparency of the dashboard (0 = solid, 90 = nearly invisible)")
-showCornerAccents = input.bool(true, "Corner Accents (Strong Blocks)", group="Visuals", tooltip="Display elegant corner markers on strong order blocks")
-fillAlpha = input.int(75, "Fill Transparency", minval=50, maxval=95, group="Visuals")
-
-// Colors - Elegant modern palette
-bullHighVol = input.color(color.new(#00ff88, 20), "Bull High Volume", group="Colors", tooltip="Vibrant cyan-green for bullish zones")
-bullLowVol = input.color(color.new(#00ff88, 85), "Bull Low Volume", group="Colors")
-bearHighVol = input.color(color.new(#ff3366, 20), "Bear High Volume", group="Colors", tooltip="Vibrant pink-red for bearish zones")
-bearLowVol = input.color(color.new(#ff3366, 85), "Bear Low Volume", group="Colors")
-bullBorder = input.color(color.new(#00ff88, 0), "Bull Border/Accent", group="Colors")
-bearBorder = input.color(color.new(#ff3366, 0), "Bear Border/Accent", group="Colors")
+string GRP_MODE = "⚙️ Mode"
+settingsMode = input.string("Auto", "Settings Mode", options=["Auto", "Manual"], group=GRP_MODE,
+     tooltip="AUTO: Optimizes all settings based on timeframe.\nMANUAL: Full control over preset and advanced settings.")
+manualPreset = input.string("Auto", "Preset Override", options=["Auto", "Scalping", "Swing", "Position"], group=GRP_MODE,
+     tooltip="Override auto-detected preset (Manual mode only).\nAUTO: Use timeframe-based preset.\nSCALPING: More signals, faster.\nSWING: Balanced.\nPOSITION: Fewer, higher-quality signals.")
+detectionMethod = input.string("Scalper", "Detection Method", options=["Institutional", "Scalper"], group=GRP_MODE,
+     tooltip="INSTITUTIONAL: Pivot-based, stricter, fewer signals.\nSCALPER: Pattern-based, more signals, faster.")
+signalTiming = input.string("Realtime (intrabar)", "Signal Timing", options=["Realtime (intrabar)", "Confirmed (bar close)"], group=GRP_MODE,
+     tooltip="REALTIME: Updates on every tick.\nCONFIRMED: Updates on bar close only.")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ADVANCED SETTINGS (Fine-tune signal quality vs frequency)
+// MODULES
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-// 1) Displacement / Impulse Tuning
-dispAtrBodyMult = input.float(0.8, "Displacement ATR Body Mult", minval=0.5, maxval=2.0, step=0.1, group="⚙️ Advanced: Displacement", 
-     tooltip="Body size threshold: body > atr * this multiplier\nLower = more signals, Higher = stricter quality")
-dispBodyToRangeMin = input.float(0.6, "Displacement Body/Range Min", minval=0.4, maxval=0.9, step=0.05, group="⚙️ Advanced: Displacement", 
-     tooltip="Body dominance: body/range must exceed this\nLower = more signals, Higher = cleaner candles")
-
-// 2) Scalper OB Search Window
-obScanWindow = input.int(3, "Scalper OB Scan Window", minval=1, maxval=6, group="⚙️ Advanced: Scalper Method", 
-     tooltip="Max bars to scan back from impulse to find opposite candle\nWider = more signals (finds OB further back)")
-
-// 3) MSB Controls
-msbLookbackMode = input.string("Auto (preset)", "MSB Lookback Mode", options=["Auto (preset)", "User override"], 
-     group="⚙️ Advanced: Structure Break", 
-     tooltip="Auto = uses timeframe presets (5/10/15)\nUser override = uses your MSB Lookback value below")
-msbLookback = input.int(10, "MSB Structure Lookback", minval=3, maxval=30, group="⚙️ Advanced: Structure Break", 
-     tooltip="Bars to scan for structure break confirmation\nHigher = stricter structure requirements\nOnly applies when 'User override' is selected above")
-msbUsePivotFallback = input.bool(true, "MSB Use Pivot Fallback", group="⚙️ Advanced: Structure Break", 
-     tooltip="Include pivot point as minimum structure level")
-
-// 4) FVG Controls
-fvgMode = input.string("Classic 3-candle", "FVG Mode", options=["Classic 3-candle", "Off", "Strict (body gap)", "Loose (wick gap)"], 
-     group="⚙️ Advanced: FVG", tooltip="Fair Value Gap detection mode\nClassic = standard 3-candle gap\nStrict = requires body gap\nLoose = allows wick gap")
-fvgMinGapAtr = input.float(0.0, "FVG Min Gap (ATR mult)", minval=0.0, maxval=1.0, step=0.05, group="⚙️ Advanced: FVG", 
-     tooltip="Minimum gap size: gapSize > atr * this\n0 = no minimum, higher = filters micro-gaps")
-
-// 5) Zone Sizing Controls
-smartSizeAtrMult = input.float(1.2, "Smart Size ATR Multiplier", minval=0.5, maxval=3.0, step=0.1, group="⚙️ Advanced: Zone Sizing", 
-     tooltip="Zone height for Smart sizing: atr * this multiplier\nHigher = wider zones")
-smartSizingAppliesTo = input.string("Scalping only", "Smart Sizing Applies To", options=["Scalping only", "All timeframes"], 
-     group="⚙️ Advanced: Zone Sizing", tooltip="When to use Smart sizing vs other methods")
-smartAnchor = input.string("Wick", "Smart Anchor Point", options=["Wick", "Body/Open"], 
-     group="⚙️ Advanced: Zone Sizing", tooltip="Wick = anchors from candle low (bull) / high (bear)\nBody/Open = anchors from body for refined institutional entries")
-
-// 6) Mitigation Controls
-mitigationMode = input.string("Auto", "Mitigation Mode", options=["Auto", "Wick", "Close", "Mean"], 
-     group="⚙️ Advanced: Mitigation", tooltip="Auto = adapts to timeframe\nWick = requires wick through zone\nClose = requires close through\nMean = requires close past midpoint")
-minPenZonePct = input.float(0.10, "Min Penetration (Zone %)", minval=0.0, maxval=0.5, step=0.05, group="⚙️ Advanced: Mitigation", 
-     tooltip="Minimum zone penetration to confirm mitigation\nHigher = prevents premature deletion on noise")
-minPenAtrPct = input.float(0.05, "Min Penetration (ATR %)", minval=0.0, maxval=0.3, step=0.01, group="⚙️ Advanced: Mitigation", 
-     tooltip="Minimum ATR-based penetration\nHigher = prevents premature deletion")
-meanMitigationLevel = input.float(0.5, "Mean Mitigation Level", minval=0.0, maxval=1.0, step=0.1, group="⚙️ Advanced: Mitigation", 
-     tooltip="For Mean mode: 0 = top of zone, 1 = bottom, 0.5 = midpoint")
-
-// 7) Retests + Rejections Controls
-touchMode = input.string("Wick", "Touch Detection Mode", options=["Wick", "Close inside zone"], 
-     group="⚙️ Advanced: Retests", tooltip="What counts as a touch/retest")
-retestDebounce = input.string("Require exit before recount", "Retest Counting", 
-     options=["Require exit before recount", "Count each bar in zone"], group="⚙️ Advanced: Retests", 
-     tooltip="How to count multiple touches")
-rejectionCloseLevel = input.string("Mid", "Rejection Close Level", options=["Mid", "Top/Bottom", "Percent into zone"], 
-     group="⚙️ Advanced: Retests", tooltip="Where close must be to confirm rejection")
-rejectionPercent = input.float(0.5, "Rejection Close Percent", minval=0.0, maxval=1.0, step=0.1, group="⚙️ Advanced: Retests", 
-     tooltip="For 'Percent into zone' mode: 0 = zone edge, 1 = opposite edge")
-
-// 8) Strength Scoring Thresholds
-volScoreMult = input.float(1.5, "Volume Score Multiplier", minval=1.0, maxval=3.0, step=0.1, group="⚙️ Advanced: Strength", 
-     tooltip="Volume threshold for strength point: vol > avgVol * this")
-bodyScoreMult = input.float(1.5, "Body Score Multiplier", minval=1.0, maxval=3.0, step=0.1, group="⚙️ Advanced: Strength", 
-     tooltip="Body size threshold for strength point: body > avgBody * this")
-vpScoreBoost = input.int(1, "VP Score Boost", minval=0, maxval=2, group="⚙️ Advanced: Strength", 
-     tooltip="Extra strength points when VP confirms (Premium)")
-eliteRequiresVP = input.bool(true, "Elite Requires VP", group="⚙️ Advanced: Strength", 
-     tooltip="Require Volume Profile confirmation for Elite rating")
-
-// 9) Performance / Object Limits
-maxBlocksUser = input.string("Auto", "Max Blocks", options=["Auto", "3", "5", "6", "8", "10", "12", "15"], 
-     group="⚙️ Advanced: Performance", tooltip="Auto = adapts to timeframe\nManual = fixed limit")
-renderMode = input.string("Gradient", "Render Mode", options=["Gradient", "Simple fill", "Borders only"], 
-     group="⚙️ Advanced: Performance", tooltip="Gradient = full visuals\nSimple = less objects\nBorders = minimal objects\nUse Simple/Borders if hitting 500 box/line limits")
+string GRP_MOD = "📊 Modules"
+useVolumeProfile = input.bool(true, "Volume Profile Enhancement", group=GRP_MOD,
+     tooltip="Boosts OBs that align with high-volume zones. Auto-scales lookback based on timeframe.")
+enableLiquidity = input.bool(true, "Liquidity Sweeps", group=GRP_MOD,
+     tooltip="Enable BSL/SSL level tracking and sweep detection.")
+enableRejection = input.bool(true, "Track Rejections", group=GRP_MOD,
+     tooltip="Detect bounces and retests off order blocks.")
+showPowerRow = input.bool(true, "Power Row", group=GRP_MOD,
+     tooltip="Display intrabar BUY/SELL pressure in dashboard.")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// POWER ROW (Intrabar Volume Dominance)
+// VISUALS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-showPowerRow = input.bool(true, "Show Power Row", group="📊 Power (Intrabar)", 
-     tooltip="Display intrabar volume dominance in dashboard\nShows BUY/SELL pressure from lower timeframe data")
-powerMode = input.string("Auto", "Power Mode", options=["Auto", "Manual"], group="📊 Power (Intrabar)", 
-     tooltip="Auto: Optimizes LTF, smoothing, and stability based on chart TF\nManual: Full control over all settings")
-powerLtf = input.timeframe("1", "Manual Lower TF", group="📊 Power (Intrabar)", 
-     tooltip="Only used when Mode is Manual\nRecommended: 1-5 min for most charts")
-powerTieBreak = input.string("Carry last direction", "Doji Handling", 
-     options=["Carry last direction", "Use prev intrabar close", "Ignore dojis"], group="📊 Power (Intrabar)", 
-     tooltip="How to classify intrabar candles where close == open (only applies to Polarity method)\n• Carry last: Use previous candle's direction\n• Prev close: Compare to prior intrabar's close\n• Ignore: Skip doji candles entirely")
-powerVolumeMethod = input.string("Pressure", "Volume Method", options=["Pressure", "Polarity"], group="📊 Power (Intrabar)",
-     tooltip="PRESSURE: Uses (close-low)/(high-low) to assign proportional buy/sell volume within each candle's range. More accurate and nuanced.\nPOLARITY: Classic method - all volume goes to buy if close>open, sell if close<open. Binary classification.")
+string GRP_VIS = "🎨 Visuals"
+showDashboard = input.bool(true, "Show Dashboard", group=GRP_VIS)
+dashboardLocation = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GRP_VIS)
+dashboardSize = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=GRP_VIS)
+dashboardTransparency = input.int(90, "Dashboard Transparency", minval=0, maxval=90, step=5, group=GRP_VIS)
+showOnlyStrongElite = input.bool(false, "Show Only Strong/Elite OBs", group=GRP_VIS,
+     tooltip="Filter out Weak and Mid strength order blocks.")
+renderMode = input.string("Gradient", "Render Mode", options=["Gradient", "Simple fill", "Borders only"], group=GRP_VIS,
+     tooltip="Gradient = full visuals. Simple/Borders = fewer objects.")
+showLabels = input.bool(true, "Show Labels", group=GRP_VIS, tooltip="Show strength and volume labels on OBs.")
+showCornerAccents = input.bool(true, "Corner Accents", group=GRP_VIS, tooltip="Corner markers on Strong/Elite blocks.")
 
-// Stability Controls
-powerNeutralBandPct = input.float(10.0, "Neutral Band %", minval=0.0, maxval=30.0, step=1.0, group="📊 Power (Intrabar)", 
-     tooltip="Creates a neutral zone around 50% dominance\nDefault 10% = neutral range [45%..55%]\nHigher = more NEUTRAL readings, less flipping")
-powerFlipConfirmBars = input.int(0, "Flip Confirm Bars (0=Auto)", minval=0, maxval=10, group="📊 Power (Intrabar)", 
-     tooltip="Bars required to confirm side change\n0 = Auto-scale based on timeframe\nHigher = more stable but slower to react")
-powerSmoothingLen = input.int(8, "Smoothing Length (Manual)", minval=1, maxval=30, group="📊 Power (Intrabar)", 
-     tooltip="EMA/SMA smoothing for display stability\nOnly used in Manual mode; Auto mode scales this")
-powerSmoothingType = input.string("EMA", "Smoothing Type", options=["EMA", "SMA"], group="📊 Power (Intrabar)")
-powerMinIntrabars = input.int(4, "Min Intrabars (Confidence)", minval=1, maxval=20, group="📊 Power (Intrabar)", 
-     tooltip="Minimum intrabar candles required for confident reading\nBelow this, shows as low-confidence (grey)")
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ALERTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_ALERT = "🔔 Alerts"
+alertNewOB = input.bool(true, "New Order Block", group=GRP_ALERT)
+alertTouch = input.bool(true, "Zone Touch", group=GRP_ALERT)
+alertReject = input.bool(true, "Rejection", group=GRP_ALERT)
+alertProximity = input.bool(true, "Approaching Zone", group=GRP_ALERT, tooltip="Alert when price approaches OB zones.")
+alertLiquidity = input.bool(false, "Liquidity Events", group=GRP_ALERT, tooltip="Alert on sweeps and liquidity runs.")
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// COLORS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_COL = "🎨 Colors"
+bullBorder = input.color(color.new(#00ff88, 0), "Bullish", group=GRP_COL)
+bearBorder = input.color(color.new(#ff3366, 0), "Bearish", group=GRP_COL)
+bslColor = input.color(color.new(#00bfff, 30), "BSL Level", group=GRP_COL)
+sslColor = input.color(color.new(#ff6600, 30), "SSL Level", group=GRP_COL)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// OPTIMAL PARAMETERS (Locked for best performance)
+// These are auto-optimized based on timeframe - not user-adjustable
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Detection
+int scalperLookback = 10
+int obScanWindow = 3
+int gridSegments = 10
+float dispAtrBodyMult = 0.8
+float dispBodyToRangeMin = 0.6
+bool useDisplacement = true
+bool useFVG = true
+bool useMSB = true
+bool useVolume = true
+string fvgMode = "Classic 3-candle"
+float fvgMinGapAtr = 0.0
+int msbLookback = 10
+bool msbUsePivotFallback = true
+
+// Zones
+float smartSizeAtrMult = 1.2
+string smartAnchor = "Wick"
+string mitigationMode = "Auto"
+float minPenZonePct = 0.10
+float minPenAtrPct = 0.05
+float meanMitigationLevel = 0.5
+string touchMode = "Wick"
+string retestDebounce = "Require exit before recount"
+string rejectionCloseLevel = "Mid"
+float rejectionPercent = 0.5
+int fillAlpha = 75
+bool showRetests = true
+
+// Strength
+float volScoreMult = 1.5
+float bodyScoreMult = 1.5
+int vpScoreBoost = 1
+int vpLookback = 100
+float vpThreshold = 1.5
+bool eliteRequiresVP = true
+string maxBlocksUser = "Auto"
+
+// Liquidity
+bool showLiquidityLevels = true
+bool showSweepEvents = true
+bool showLiquidityRuns = false
+bool markEqualHL = true
+int sweepLookback = 20
+float equalHLThreshold = 0.1
+float sweepWickMin = 0.5
+bool requireVolumeSpike = true
+int maxLiquidityLevelsInput = 6
+color sweepBullColor = color.new(#00ff88, 20)
+color sweepBearColor = color.new(#ff3366, 20)
+
+// Alerts
+float proximityThreshold = 1.0
+float liquidityProximityPct = 0.5
+
+// Power Row
+string powerMode = "Auto"
+string powerLtf = "1"
+string powerVolumeMethod = "Pressure"
+string powerTieBreak = "Carry last direction"
+float powerNeutralBandPct = 10.0
+int powerFlipConfirmBars = 0
+int powerSmoothingLen = 8
+string powerSmoothingType = "EMA"
+int powerMinIntrabars = 4
+
+// === DERIVED VARIABLES (Backward compatibility) ===
+// These maintain compatibility with the rest of the code
+bool showStrength = showLabels
+bool showVolLabel = showLabels
+bool proximityAlertEnabled = alertProximity
+bool alertOnlyStrongBlocks = true  // Always true in simplified mode
+bool alertOnlyFreshBlocks = false
+bool requireDirectionalApproach = true  // Always true
+bool alertLiquiditySweep = alertLiquidity
+bool alertLiquidityRun = alertLiquidity
+bool alertApproachingLiquidity = alertLiquidity
+string smartSizingAppliesTo = "Scalping only"
+string blockSizing = "Smart"
 
 // === EFFECTIVE PRESET DETERMINATION ===
-// When settingsMode=Auto, derive preset from timeframe (ignore autoMode toggle)
-// When settingsMode=Manual, use the legacy autoMode/manualPreset logic
-string effectivePreset = "Scalping"
-bool effectiveAutoMode = settingsMode == "Auto" ? true : autoMode
-
-if settingsMode == "Auto"
-    // Force timeframe-based preset in Auto mode
-    effectivePreset := is_scalping ? "Scalping" : is_swing ? "Swing" : "Position"
-else
-    // Manual mode: respect user's autoMode choice
-    if autoMode
-        effectivePreset := is_scalping ? "Scalping" : is_swing ? "Swing" : "Position"
-    else
-        effectivePreset := manualPreset
+// Auto mode: derive preset from timeframe
+// Manual mode: use manualPreset override (if not "Auto")
+string tfBasedPreset = is_scalping ? "Scalping" : is_swing ? "Swing" : "Position"
+string effectivePreset = (settingsMode == "Manual" and manualPreset != "Auto") ? manualPreset : tfBasedPreset
+bool effectiveAutoMode = settingsMode == "Auto"
 
 // === AUTO-CONFIGURATION BASED ON PRESET ===
-int actualLookback = obLookback
+int actualLookback = 5  // Default, overwritten by preset
 float dispMagnitude = 1.3
 int actualMsbPeriod = msbLookback  // Now uses user input as base
 bool actualFVG = useFVG
@@ -368,8 +296,8 @@ else
     if settingsMode == "Auto"
         effectiveGridSegments := math.min(gridSegments, 15)
 
-// User override for MSB lookback (only in Manual mode or when explicitly set)
-if settingsMode == "Manual" and msbLookbackMode == "User override"
+// User override for MSB lookback (only in Manual mode)
+if settingsMode == "Manual"
     actualMsbPeriod := msbLookback
 
 // === LIQUIDITY AUTO-SCALING ===
@@ -697,26 +625,36 @@ type LiquiditySweep
     int retestCount          // Times level retested after sweep
     int lastUpdateBar        // State tracking
 
+// Dashboard size helpers (must be before renderDashboardRow)
+getDashTextSize() =>
+    dashboardSize == "Tiny" ? size.tiny : dashboardSize == "Normal" ? size.normal : size.small
+
+getDashHeaderSize() =>
+    dashboardSize == "Tiny" ? size.tiny : dashboardSize == "Normal" ? size.small : size.small
+
+string dashTextSize = getDashTextSize()
+string dashHeaderSize = getDashHeaderSize()
+
 // Helper to render a dashboard row for an order block
 // Returns the next row number (incremented if row was rendered)
 renderDashboardRow(table tbl, int row, OrderBlock b, string dirLabel, color dirCol, float dist, string rejectedLabel) =>
     int nextRow = row
     // Render regardless of distance; negative means price is beyond the zone
     if row <= 7  // Leave rows 8-9 for Power
-        table.cell(tbl, 0, row, dirLabel, text_color=dirCol, text_size=size.small, width=0)
-        table.cell(tbl, 1, row, formatVolume(b.totalVolume), text_color=dirCol, text_size=size.small, width=0)
-        table.cell(tbl, 2, row, str.tostring(round2(dist)) + "%", text_color=color.white, text_size=size.small, width=0)
+        table.cell(tbl, 0, row, dirLabel, text_color=dirCol, text_size=dashTextSize, width=0)
+        table.cell(tbl, 1, row, formatVolume(b.totalVolume), text_color=dirCol, text_size=dashTextSize, width=0)
+        table.cell(tbl, 2, row, str.tostring(round2(dist)) + "%", text_color=color.white, text_size=dashTextSize, width=0)
 
         color strengthCol = b.strength == "Elite" ? color.yellow : b.strength == "Strong" ? dirCol : b.strength == "Mid" ? color.orange : color.gray
-        table.cell(tbl, 3, row, b.strength, text_color=strengthCol, text_size=size.small, width=0)
-        table.cell(tbl, 4, row, str.tostring(b.retestCount), text_color=color.white, text_size=size.small, width=0)
+        table.cell(tbl, 3, row, b.strength, text_color=strengthCol, text_size=dashTextSize, width=0)
+        table.cell(tbl, 4, row, str.tostring(b.retestCount), text_color=color.white, text_size=dashTextSize, width=0)
 
         // Check if price is currently in zone
         bool currentlyInZone = low <= b.top and high >= b.bot
         string status = b.rejected ? rejectedLabel : (b.retestCount > 0 ? (currentlyInZone ? "ACTIVE" : "TESTED") : "FRESH")
         color statusCol = b.rejected ? dirCol : (currentlyInZone ? color.yellow : (b.retestCount > 0 ? color.orange : color.white))
-        table.cell(tbl, 5, row, status, text_color=statusCol, text_size=size.small, width=0)
-        table.cell(tbl, 6, row, str.tostring(round1(b.relativeVol)) + "x", text_color=color.white, text_size=size.small, width=0)
+        table.cell(tbl, 5, row, status, text_color=statusCol, text_size=dashTextSize, width=0)
+        table.cell(tbl, 6, row, str.tostring(round1(b.relativeVol)) + "x", text_color=color.white, text_size=dashTextSize, width=0)
         nextRow := row + 1
     nextRow
 
@@ -742,12 +680,30 @@ var sslLevels = array.new<LiquiditySweep>()  // Sell-side liquidity (below price
 var table dashboard = na
 var string lastDashboardLocation = na  // Track location for table recreation
 var int lastDashboardTransparency = na  // Track transparency for table recreation
+var string lastDashboardSize = na  // Track size for table recreation
 
 // Market context (no var needed - recalculated each bar)
 float atr = ta.atr(14)
 float avgVol = ta.sma(volume, 20)
 float avgBody = ta.sma(math.abs(close - open), 20)
 float sma50 = ta.sma(close, 50)
+
+// Premium/Discount Zone Calculation (ICT concept)
+// Auto-scale lookback based on timeframe for optimal zone responsiveness
+int zoneLookback = is_scalping ? 30 : is_swing ? 50 : 80
+float zoneSwingHigh = ta.highest(high, zoneLookback)
+float zoneSwingLow = ta.lowest(low, zoneLookback)
+float zoneRange = zoneSwingHigh - zoneSwingLow
+float zoneEquilibrium = zoneSwingLow + zoneRange * 0.5
+bool inDiscount = close < zoneEquilibrium
+bool inPremium = close > zoneEquilibrium
+// OTE zones (62-79% Fibonacci retracement)
+float oteLongTop = zoneSwingLow + zoneRange * 0.38    // 62% retracement from high
+float oteLongBot = zoneSwingLow + zoneRange * 0.21    // 79% retracement from high
+float oteShortBot = zoneSwingLow + zoneRange * 0.62   // 62% retracement from low
+float oteShortTop = zoneSwingLow + zoneRange * 0.79   // 79% retracement from low
+bool inOteLong = close >= oteLongBot and close <= oteLongTop
+bool inOteShort = close >= oteShortBot and close <= oteShortTop
 
 max_bars_back(atr, 600)
 max_bars_back(avgBody, 600)
@@ -781,8 +737,6 @@ var bool nearSSL = false
 // Anti-spam latch for proximity alerts - persist across bars (NOT reset each bar)
 var bool wasNearBSL = false
 var bool wasNearSSL = false
-var int lastBearSweepBar = 0
-var int lastBullSweepBar = 0
 
 bool showAnyLabel = showVolLabel or showStrength or showRetests
 
@@ -1128,23 +1082,22 @@ findNearestOB(array<OrderBlock> blocks, bool isBull) =>
     // Find nearest qualifying order block within proximity threshold
     float nearestDist = 999999.0
     bool isNear = false
-    bool qualifiesForAlert = false
-    
+
     int blockCount = array.size(blocks)
     if blockCount > 0
         for i = 0 to blockCount - 1
             OrderBlock b = array.get(blocks, i)
-            
+
             // Skip mitigated blocks
             if b.mitigated
                 continue
-            
-            // Apply quality filters (user-configurable)
+
+            // Apply quality filters
             if alertOnlyStrongBlocks and (b.strength != "Strong" and b.strength != "Elite")
                 continue
             if alertOnlyFreshBlocks and b.retestCount > 0
                 continue
-            
+
             // Calculate distance from current price to zone
             float dist = 0.0
             if isBull
@@ -1153,21 +1106,19 @@ findNearestOB(array<OrderBlock> blocks, bool isBull) =>
             else
                 // Bear OB: distance from zone top to current close (approaching from below)
                 dist := close < b.top ? (b.top - close) / close * 100 : -1.0
-            
+
             // Check if within threshold and not yet inside zone
             if dist > 0 and dist <= proximityThreshold
-                // Optional: Check directional approach for more actionable signals
+                // Check directional approach for more actionable signals
                 bool correctDirection = true
                 if requireDirectionalApproach
-                    // Bull OB: price should be falling (bearish pressure = potential bounce setup)
-                    // Bear OB: price should be rising (bullish pressure = potential rejection setup)
+                    // Bull OB: price falling = potential bounce | Bear OB: price rising = potential rejection
                     correctDirection := isBull ? (close < open) : (close > open)
-                
+
                 if correctDirection and dist < nearestDist
                     nearestDist := dist
                     isNear := true
-                    qualifiesForAlert := true
-    
+
     [isNear, nearestDist]
 
 // === SCALPER DETECTION METHOD (ICT/SMC - Correct Formula) ===
@@ -1295,9 +1246,10 @@ createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) 
             float centerWeight = 1.0 - math.abs(progress - 0.5) * 2.0  // Peak at center
 
             // Elegant transparency gradient
+            // Strong/Elite: more visible (70-95), Weak/Mid: much lighter (88-95)
             int alpha = isStrong ?
-                 int(70 + centerWeight * 25) :  // More visible for strong
-                 int(80 + centerWeight * 15)     // More subtle for weak
+                 int(70 + centerWeight * 25) :  // More visible for strong/elite
+                 int(88 + centerWeight * 7)      // Much lighter for weak/mid
 
             color layerCol = color.new(baseCol, alpha)
 
@@ -1308,11 +1260,14 @@ createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) 
     else if rMode == "Simple fill"
         // Simple mode: single fill box (much fewer objects)
         color baseCol = block.direction == DIR_BULL ? bullBorder : bearBorder
-        color fillCol = color.new(baseCol, fillAlpha)
+        bool isStrong = block.strength == "Strong" or block.strength == "Elite"
+        // Strong/Elite use fillAlpha, Weak/Mid are much lighter (90)
+        int simpleAlpha = isStrong ? fillAlpha : 90
+        color fillCol = color.new(baseCol, simpleAlpha)
         int leftBarIdx = leftBar
         int rightBarIdx = bar_index
-        
-        box fillBox = box.new(leftBarIdx, block.top, rightBarIdx, block.bot, 
+
+        box fillBox = box.new(leftBarIdx, block.top, rightBarIdx, block.bot,
              border_width=0, bgcolor=fillCol)
         array.push(boxArray, fillBox)
     // else "Borders only" - no fill boxes created
@@ -1340,8 +1295,8 @@ createBorder(OrderBlock block, int leftTime, string rMode) =>
             color glowCol = color.new(baseCol, 85)
             fill := linefill.new(topLine, botLine, glowCol)
         else
-            // Subtle fill for non-strong blocks
-            color fillCol = color.new(baseCol, fillAlpha)
+            // Much lighter fill for Weak/Mid blocks (alpha 90 for subtlety)
+            color fillCol = color.new(baseCol, 90)
             fill := linefill.new(topLine, botLine, fillCol)
     
     [topLine, botLine, fill]
@@ -1628,13 +1583,15 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
         float vpConcentration = useVolumeProfile ? analyzeVolumeProfile(top, bot, vpLookbackEff) : 0.0
         
         // Enhanced strength with VP
-        string strength = useVolumeProfile ? 
-             getEnhancedStrength(vol, body, aligned, vpConcentration) : 
+        string strength = useVolumeProfile ?
+             getEnhancedStrength(vol, body, aligned, vpConcentration) :
              getStrength(vol, body, aligned)
-        
+
+        // Filter: Skip weak/mid blocks if only showing Strong/Elite
+        bool skipNewBlock = showOnlyStrongElite and strength != "Strong" and strength != "Elite"
+
         // Handle overlapping blocks - keep higher quality
         // Single-pass with deferred batch deletion (O(N) instead of O(N²))
-        bool skipNewBlock = false
         int newScore = strengthScore(strength)
         int[] indicesToRemove = array.new<int>()
 
@@ -1885,6 +1842,12 @@ bool validBear = false
 int scalperBullIdx = 0
 int scalperBearIdx = 0
 
+// === PERFORMANCE: Skip detection on intrabar ticks in Confirmed mode ===
+// OBs only form on bar close, so detection calculations are wasted on every tick
+// Realtime mode: run detection every tick (for live feedback)
+// Confirmed mode: only run detection on bar close (significant CPU savings)
+bool shouldRunDetection = signalTiming == "Realtime (intrabar)" or barstate.isconfirmed
+
 // Pre-compute filter results only when needed (Institutional method + filter enabled)
 // Scalper method doesn't use these filters, so skip computation entirely
 bool hasDisplacement = false
@@ -1893,7 +1856,7 @@ bool hasBearFVG = false
 bool hasBullMSB = false
 bool hasBearMSB = false
 
-if detectionMethod == "Institutional"
+if shouldRunDetection and detectionMethod == "Institutional"
     if useDisplacement
         hasDisplacement := checkDisplacement(actualLookback - 1, dispMagnitude)
     if actualFVG
@@ -1903,14 +1866,14 @@ if detectionMethod == "Institutional"
         hasBullMSB := checkMSB(actualLookback, actualLookback - 1, actualMsbPeriod, "Bull")
         hasBearMSB := checkMSB(actualLookback, actualLookback - 1, actualMsbPeriod, "Bear")
 
-if detectionMethod == "Scalper"
+if shouldRunDetection and detectionMethod == "Scalper"
     // === SCALPER DETECTION (ICT/SMC Method - Candle immediately before impulse) ===
     [scalperBear, scalperBull, bearIdx, bullIdx, bearImpStr, bullImpStr] = checkScalperCondition(scalperLookback)
     validBull := scalperBull
     validBear := scalperBear
     scalperBullIdx := bullIdx
     scalperBearIdx := bearIdx
-    
+
     // Mutual exclusivity: if both trigger, pick the one with stronger IMPULSE candle
     if validBull and validBear
         // Compare impulse candle strength (not OB candle)
@@ -1918,45 +1881,48 @@ if detectionMethod == "Scalper"
             validBear := false
         else
             validBull := false
-else
+else if shouldRunDetection
     // === INSTITUTIONAL DETECTION (Pivot-based with filters - stricter) ===
     bool isPivotLow = false
     bool isPivotHigh = false
-    
+
     // Early-bars guard: need at least actualLookback * 2 bars of history
     if bar_index >= actualLookback * 2
         isPivotLow := true
         isPivotHigh := true
-        
+
         for i = 1 to actualLookback
             if low[actualLookback] >= low[actualLookback + i] or low[actualLookback] >= low[actualLookback - i]
                 isPivotLow := false
             if high[actualLookback] <= high[actualLookback + i] or high[actualLookback] <= high[actualLookback - i]
                 isPivotHigh := false
-    
+            // Early exit if both already failed
+            if not isPivotLow and not isPivotHigh
+                break
+
     // Validation
     validBull := isPivotLow
     validBear := isPivotHigh
-    
+
     // Filter: Displacement (use pre-computed values)
     if useDisplacement
         if validBull and close[actualLookback - 1] <= open[actualLookback - 1]
             validBull := false
         if validBear and close[actualLookback - 1] >= open[actualLookback - 1]
             validBear := false
-        
+
         if validBull and not hasDisplacement
             validBull := false
         if validBear and not hasDisplacement
             validBear := false
-    
+
     // Filter: FVG (use pre-computed values)
     if actualFVG
         if validBull and not hasBullFVG
             validBull := false
         if validBear and not hasBearFVG
             validBear := false
-    
+
     // Filter: MSB (use pre-computed values)
     if actualMSB
         if validBull and not hasBullMSB
@@ -1992,18 +1958,17 @@ isInAnyBlock(array<OrderBlock> blocks, string mode) =>
     bool inAny = false
     int blockCount = array.size(blocks)
     if blockCount > 0
+        // Pre-compute mode check outside loop
+        bool useWickMode = mode == "Wick"
         for i = 0 to blockCount - 1
             OrderBlock b = array.get(blocks, i)
-            if not b.mitigated
-                // Respect touchMode setting (same logic as retest detection)
-                bool inZone = false
-                if mode == "Wick"
-                    inZone := low <= b.top and high >= b.bot
-                else  // "Close inside zone"
-                    inZone := close >= b.bot and close <= b.top
-                if inZone
-                    inAny := true
-                    break
+            if b.mitigated
+                continue
+            // Respect touchMode setting (same logic as retest detection)
+            bool inZone = useWickMode ? (low <= b.top and high >= b.bot) : (close >= b.bot and close <= b.top)
+            if inZone
+                inAny := true
+                break
     inAny
 
 bool inBullOBNow = isInAnyBlock(bullBlocks, touchMode)
@@ -2062,20 +2027,14 @@ if shouldRunLiquidity
         createLiquidityLevelEntry(slLevel, bar_index - confirmBars, false, sslLevels, showLiquidityLevels)
 
     // 4. Check for sweeps AND runs on existing levels
-    [bearSweep, bearRun, bearSweepBarTmp] = processSweepsAndRuns(bslLevels, true)   // Check BSL for bearish sweeps/runs
-    [bullSweep, bullRun, bullSweepBarTmp] = processSweepsAndRuns(sslLevels, false)  // Check SSL for bullish sweeps/runs
-    
+    [bearSweep, bearRun, _] = processSweepsAndRuns(bslLevels, true)   // Check BSL for bearish sweeps/runs
+    [bullSweep, bullRun, _] = processSweepsAndRuns(sslLevels, false)  // Check SSL for bullish sweeps/runs
+
     // Update global flags
-    if bearSweep
-        bearSweepDetected := true
-        lastBearSweepBar := bearSweepBarTmp
-    if bearRun
-        bearRunDetected := true
-    if bullSweep
-        bullSweepDetected := true
-        lastBullSweepBar := bullSweepBarTmp
-    if bullRun
-        bullRunDetected := true
+    bearSweepDetected := bearSweep
+    bearRunDetected := bearRun
+    bullSweepDetected := bullSweep
+    bullRunDetected := bullRun
 
     // 5. Update visuals (only if showing levels)
     if showLiquidityLevels
@@ -2114,21 +2073,23 @@ getDashboardPosition(string loc) =>
     loc == "Top Left" ? position.top_left : loc == "Bottom Right" ? position.bottom_right : loc == "Bottom Left" ? position.bottom_left : position.top_right
 
 if showDashboard and barstate.islast
-    // Check if location or transparency changed - need to recreate table
+    // Check if location, transparency, or size changed - need to recreate table
     bool settingsChanged = (not na(lastDashboardLocation) and dashboardLocation != lastDashboardLocation) or
-                           (not na(lastDashboardTransparency) and dashboardTransparency != lastDashboardTransparency)
+                           (not na(lastDashboardTransparency) and dashboardTransparency != lastDashboardTransparency) or
+                           (not na(lastDashboardSize) and dashboardSize != lastDashboardSize)
     if settingsChanged
         if not na(dashboard)
             table.delete(dashboard)
             dashboard := na
-    
+
     if na(dashboard)
-        dashboard := table.new(getDashboardPosition(dashboardLocation), 7, 10, bgcolor=color.new(#000000, dashboardTransparency),
+        dashboard := table.new(getDashboardPosition(dashboardLocation), 7, 12, bgcolor=color.new(#000000, dashboardTransparency),
              border_color=color.new(color.white, 70), border_width=1)
         lastDashboardLocation := dashboardLocation
         lastDashboardTransparency := dashboardTransparency
-    
-    table.clear(dashboard, 0, 0, 6, 9)
+        lastDashboardSize := dashboardSize
+
+    table.clear(dashboard, 0, 0, 6, 11)
     
     // Header with mode tags
     table.merge_cells(dashboard, 0, 0, 6, 0)
@@ -2136,16 +2097,16 @@ if showDashboard and barstate.islast
     string modeTag = settingsMode == "Auto" ? "MODE:AUTO" : "MODE:MANUAL"
     string confirmTag = signalTiming == "Confirmed (bar close)" ? " | CONFIRMED" : ""
     string headerText = presetDisplay + " | " + modeTag + confirmTag
-    table.cell(dashboard, 0, 0, headerText, text_color=color.white, text_size=size.normal)
-    
+    table.cell(dashboard, 0, 0, headerText, text_color=color.white, text_size=dashHeaderSize)
+
     // Column headers (width=0 auto-fits to content)
-    table.cell(dashboard, 0, 1, "Type", text_color=color.gray, text_size=size.small, width=0)
-    table.cell(dashboard, 1, 1, "Volume", text_color=color.gray, text_size=size.small, width=0)
-    table.cell(dashboard, 2, 1, "Dist%", text_color=color.gray, text_size=size.small, width=0)
-    table.cell(dashboard, 3, 1, "Strength", text_color=color.gray, text_size=size.small, width=0)
-    table.cell(dashboard, 4, 1, "Tests", text_color=color.gray, text_size=size.small, width=0)
-    table.cell(dashboard, 5, 1, "Status", text_color=color.gray, text_size=size.small, width=0)
-    table.cell(dashboard, 6, 1, "Vol", text_color=color.gray, text_size=size.small, width=0)
+    table.cell(dashboard, 0, 1, "Type", text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 1, 1, "Volume", text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 2, 1, "Dist%", text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 3, 1, "Strength", text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 4, 1, "Tests", text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 5, 1, "Status", text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 6, 1, "Vol", text_color=color.gray, text_size=dashTextSize, width=0)
     
     int row = 2
     row := renderDashboardBlocks(dashboard, row, bearBlocks, false)
@@ -2158,9 +2119,9 @@ if showDashboard and barstate.islast
         int sslCount = array.size(sslLevels)
         if bslCount > 0 or sslCount > 0
             if row <= 7  // Leave rows 8-9 for Power
-                table.cell(dashboard, 0, row, "LIQUIDITY", text_color=color.gray, text_size=size.small, width=0)
+                table.cell(dashboard, 0, row, "LIQUIDITY", text_color=color.gray, text_size=dashTextSize, width=0)
                 row += 1
-            
+
             // Show nearest BSL
             if bslCount > 0 and row <= 7  // Leave rows 8-9 for Power
                 LiquiditySweep nearestBSL = array.get(bslLevels, 0)
@@ -2174,13 +2135,13 @@ if showDashboard and barstate.islast
                             nearestBSL := sweep
                             bslDist := dist
                             foundValidBSL := true
-                
+
                 if foundValidBSL
                     string bslStatus = nearestBSL.isEqual ? "EQ BSL" : "BSL"
-                    table.cell(dashboard, 0, row, bslStatus + " ▲", text_color=color.new(#00bfff, 0), text_size=size.small, width=0)
-                    table.cell(dashboard, 1, row, str.tostring(round2(bslDist)) + "%", text_color=color.white, text_size=size.small, width=0)
+                    table.cell(dashboard, 0, row, bslStatus + " ▲", text_color=color.new(#00bfff, 0), text_size=dashTextSize, width=0)
+                    table.cell(dashboard, 1, row, str.tostring(round2(bslDist)) + "%", text_color=color.white, text_size=dashTextSize, width=0)
                     row += 1
-            
+
             // Show nearest SSL
             if sslCount > 0 and row <= 7  // Leave rows 8-9 for Power
                 LiquiditySweep nearestSSL = array.get(sslLevels, 0)
@@ -2194,11 +2155,11 @@ if showDashboard and barstate.islast
                             nearestSSL := sweep
                             sslDist := dist
                             foundValidSSL := true
-                
+
                 if foundValidSSL
                     string sslStatus = nearestSSL.isEqual ? "EQ SSL" : "SSL"
-                    table.cell(dashboard, 0, row, sslStatus + " ▼", text_color=color.new(#ff6600, 0), text_size=size.small, width=0)
-                    table.cell(dashboard, 1, row, str.tostring(round2(sslDist)) + "%", text_color=color.white, text_size=size.small, width=0)
+                    table.cell(dashboard, 0, row, sslStatus + " ▼", text_color=color.new(#ff6600, 0), text_size=dashTextSize, width=0)
+                    table.cell(dashboard, 1, row, str.tostring(round2(sslDist)) + "%", text_color=color.white, text_size=dashTextSize, width=0)
                     row += 1
     
     // === POWER ROW (Intrabar Volume Dominance) - Always at bottom ===
@@ -2214,13 +2175,13 @@ if showDashboard and barstate.islast
         
         // Separator line with LTF indicator
         string powerHeader = "POWER " + ltfDisplay
-        table.cell(dashboard, 0, powerSepRow, powerHeader, text_color=color.gray, text_size=size.small, width=0)
-        table.cell(dashboard, 1, powerSepRow, "", text_size=size.small, width=0)
-        table.cell(dashboard, 2, powerSepRow, "", text_size=size.small, width=0)
-        table.cell(dashboard, 3, powerSepRow, "", text_size=size.small, width=0)
-        table.cell(dashboard, 4, powerSepRow, "", text_size=size.small, width=0)
-        table.cell(dashboard, 5, powerSepRow, "", text_size=size.small, width=0)
-        table.cell(dashboard, 6, powerSepRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 0, powerSepRow, powerHeader, text_color=color.gray, text_size=dashTextSize, width=0)
+        table.cell(dashboard, 1, powerSepRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 2, powerSepRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 3, powerSepRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 4, powerSepRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 5, powerSepRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 6, powerSepRow, "", text_size=dashTextSize, width=0)
         
         // Select display values based on signal timing mode
         // Confirmed mode uses latched values (stable, no intrabar flicker)
@@ -2241,22 +2202,52 @@ if showDashboard and barstate.islast
         
         // Column 0: "Power" label with mode indicator
         string modeIndicator = powerMode == "Auto" ? "Power" : "Power*"
-        table.cell(dashboard, 0, powerDataRow, modeIndicator, text_color=color.white, text_size=size.small, width=0)
+        table.cell(dashboard, 0, powerDataRow, modeIndicator, text_color=color.white, text_size=dashTextSize, width=0)
         // Column 1: BUY/SELL/NEUTRAL (colored)
-        table.cell(dashboard, 1, powerDataRow, sideText, text_color=sideCol, text_size=size.small, width=0)
+        table.cell(dashboard, 1, powerDataRow, sideText, text_color=sideCol, text_size=dashTextSize, width=0)
         // Column 2: Percentage (colored to match side)
         string pctText = displayLowConf ? "—" : (str.tostring(round1(displayPct)) + "%")
-        table.cell(dashboard, 2, powerDataRow, pctText, text_color=pctCol, text_size=size.small, width=0)
+        table.cell(dashboard, 2, powerDataRow, pctText, text_color=pctCol, text_size=dashTextSize, width=0)
         // Column 3: Intrabar count (confidence indicator)
         string confText = str.tostring(displayIntrabarCount) + " bars"
         color confCol = displayLowConf ? color.orange : color.gray
-        table.cell(dashboard, 3, powerDataRow, confText, text_color=confCol, text_size=size.small, width=0)
+        table.cell(dashboard, 3, powerDataRow, confText, text_color=confCol, text_size=dashTextSize, width=0)
         // Column 4: Show confirmation status (optional debug info)
         string confirmStatus = flipConfirmCount > 0 ? "(" + str.tostring(flipConfirmCount) + ")" : ""
-        table.cell(dashboard, 4, powerDataRow, confirmStatus, text_color=color.gray, text_size=size.small, width=0)
+        table.cell(dashboard, 4, powerDataRow, confirmStatus, text_color=color.gray, text_size=dashTextSize, width=0)
         // Columns 5-6: blank
-        table.cell(dashboard, 5, powerDataRow, "", text_size=size.small, width=0)
-        table.cell(dashboard, 6, powerDataRow, "", text_size=size.small, width=0)
+        table.cell(dashboard, 5, powerDataRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 6, powerDataRow, "", text_size=dashTextSize, width=0)
+
+    // === PREMIUM/DISCOUNT ZONE (Below Power Row) ===
+    int zoneRow = 10
+    string zoneLabel = inDiscount ? "DISCOUNT" : inPremium ? "PREMIUM" : "EQUILIBRIUM"
+    color zoneCol = inDiscount ? bullBorder : inPremium ? bearBorder : color.gray
+    string oteLabel = inOteLong ? "OTE▲" : inOteShort ? "OTE▼" : ""
+    color oteCol = color.new(#ffd700, 0)
+
+    // Zone header row
+    table.cell(dashboard, 0, zoneRow, "ZONE", text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 1, zoneRow, zoneLabel, text_color=zoneCol, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 2, zoneRow, oteLabel, text_color=oteCol, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 3, zoneRow, "", text_size=dashTextSize, width=0)
+    table.cell(dashboard, 4, zoneRow, "", text_size=dashTextSize, width=0)
+    table.cell(dashboard, 5, zoneRow, "", text_size=dashTextSize, width=0)
+    table.cell(dashboard, 6, zoneRow, "", text_size=dashTextSize, width=0)
+
+    // Zone detail row - show distance to equilibrium
+    int zoneDetailRow = 11
+    float eqDist = zoneRange > 0 ? math.abs(close - zoneEquilibrium) / zoneRange * 100 : 0
+    string depthLabel = inDiscount ? "Depth" : inPremium ? "Height" : "At EQ"
+    string depthValue = zoneRange > 0 ? str.tostring(math.round(eqDist)) + "%" : "—"
+
+    table.cell(dashboard, 0, zoneDetailRow, depthLabel, text_color=color.gray, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 1, zoneDetailRow, depthValue, text_color=color.white, text_size=dashTextSize, width=0)
+    table.cell(dashboard, 2, zoneDetailRow, "", text_size=dashTextSize, width=0)
+    table.cell(dashboard, 3, zoneDetailRow, "", text_size=dashTextSize, width=0)
+    table.cell(dashboard, 4, zoneDetailRow, "", text_size=dashTextSize, width=0)
+    table.cell(dashboard, 5, zoneDetailRow, "", text_size=dashTextSize, width=0)
+    table.cell(dashboard, 6, zoneDetailRow, "", text_size=dashTextSize, width=0)
 
 // === ALERTS ===
 // Note: alertcondition must be at global scope
