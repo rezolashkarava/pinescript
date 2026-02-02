@@ -113,6 +113,9 @@ int DIR_BEAR = -1
 string GRP_MODE = "⚙️ Mode"
 settingsMode = input.string("Auto", "Settings Mode", options=["Auto", "Manual"], group=GRP_MODE,
      tooltip="AUTO: Optimizes all settings based on timeframe.\nMANUAL: Full control over preset and advanced settings.")
+// NEW: Adaptive Features
+useAdaptiveScan = input.bool(true, "Adaptive Scan Window", group=GRP_MODE, tooltip="Automatically extends scan window in low volatility to find OBs.")
+
 manualPreset = input.string("Auto", "Preset Override", options=["Auto", "Scalping", "Swing", "Position"], group=GRP_MODE,
      tooltip="Override auto-detected preset (Manual mode only).\nAUTO: Use timeframe-based preset.\nSCALPING: More signals, faster.\nSWING: Balanced.\nPOSITION: Fewer, higher-quality signals.")
 detectionMethod = input.string("Scalper", "Detection Method", options=["Institutional", "Scalper"], group=GRP_MODE,
@@ -288,6 +291,7 @@ int actualMsbPeriod = msbLookback  // Now uses user input as base
 bool actualFVG = useFVG
 bool actualMSB = useMSB
 int maxBlocks = 10
+int effectiveScanWindow = obScanWindow
 string mitigationMethod = "Wick"
 
 // Performance guardrails (Auto mode forces safe defaults)
@@ -329,6 +333,9 @@ else
     mitigationMethod := mitigationMode == "Auto" ? "Mean" : mitigationMode
     if settingsMode == "Auto"
         effectiveGridSegments := math.min(gridSegments, 15)
+        // Adaptive Scan: Allow deeper scan for Position trading
+        if useAdaptiveScan
+            effectiveScanWindow := 8
 
 // User override for MSB lookback (only in Manual mode)
 if settingsMode == "Manual"
@@ -1300,16 +1307,31 @@ checkScalperCondition(int tuning) =>
             if bullImpulseIdx != -1 and bearImpulseIdx != -1
                 break
     
+    // Determine effective window (Base + Adaptive extension)
+    int maxScan = useAdaptiveScan ? effectiveScanWindow * 2 : effectiveScanWindow
+    
     // 2. Scan 1-3 candles back from impulse to find nearest opposite (bearish) candle
     if bullImpulseIdx >= 0
         float impulseBody = close[bullImpulseIdx] - open[bullImpulseIdx]
         float atrAtImpulse = atr[bullImpulseIdx]  // Use ATR at impulse candle (from global atr series)
         bullImpulseStrength := atrAtImpulse > 0 ? impulseBody / atrAtImpulse : 0.0  // Normalized strength
         
-        for j = 1 to obScanWindow
+        for j = 1 to maxScan
             int candidateIdx = bullImpulseIdx + j
             if candidateIdx > bar_index
                 break
+            
+            // ADAPTIVE SCAN: In low volatility, we allow scanning further back
+            // If checking past normal window, require strictly low volatility to accept it
+            bool isExtendedScan = j > obScanWindow
+            bool lowVolCondition = true
+            if isExtendedScan
+                // Simple low vol check: current range < average range
+                lowVolCondition := (high[candidateIdx] - low[candidateIdx]) < atr[candidateIdx]
+            
+            if isExtendedScan and (not useAdaptiveScan or not lowVolCondition)
+                break
+
             // Stop if we hit another qualifying displacement candle (same full predicate)
             float body = math.abs(close[candidateIdx] - open[candidateIdx])
             float range_c = high[candidateIdx] - low[candidateIdx]
@@ -1332,10 +1354,20 @@ checkScalperCondition(int tuning) =>
         float atrAtBearImpulse = atr[bearImpulseIdx]  // Use ATR at impulse candle (from global atr series)
         bearImpulseStrength := atrAtBearImpulse > 0 ? bearImpBody / atrAtBearImpulse : 0.0  // Normalized strength
         
-        for j = 1 to obScanWindow
+        for j = 1 to maxScan
             int candidateIdx = bearImpulseIdx + j
             if candidateIdx > bar_index
                 break
+
+            // ADAPTIVE SCAN: In low volatility, we allow scanning further back
+            bool isExtendedScan = j > obScanWindow
+            bool lowVolCondition = true
+            if isExtendedScan
+                lowVolCondition := (high[candidateIdx] - low[candidateIdx]) < atr[candidateIdx]
+            
+            if isExtendedScan and (not useAdaptiveScan or not lowVolCondition)
+                break
+
             // Stop if we hit another qualifying displacement candle
             float body = math.abs(close[candidateIdx] - open[candidateIdx])
             float range_c = high[candidateIdx] - low[candidateIdx]
@@ -2255,7 +2287,23 @@ if showDashboard and barstate.islast
     string presetDisplay = effectivePreset == "Scalping" ? "SCALPING" : effectivePreset == "Swing" ? "SWING" : "POSITION"
     string modeTag = settingsMode == "Auto" ? "MODE:AUTO" : "MODE:MANUAL"
     string confirmTag = signalTiming == "Confirmed (bar close)" ? " | CONFIRMED" : ""
-    string headerText = presetDisplay + " | " + modeTag + confirmTag
+    
+    // HTF Trend in Header
+    // Determine HTF (simulated for efficiency or real request if needed)
+    // For simplicity and performance, we'll use a 200 SMA relative comparison as "Trend"
+    // To make it truly HTF, we'd need another security call, but we can infer from current chart context + 200 SMA
+    bool uptrend = close > sma50  // Using SMA50 from global scope as localized trend
+    // A robust HTF would check a higher timeframe. Let's add a lightweight one.
+    string htfStr = ""
+    // Only check HTF if not on high timeframe already
+    if tf_in_minutes < 240
+        string htfTf = tf_in_minutes < 60 ? "240" : "D"
+        float htfClose = request.security(syminfo.tickerid, htfTf, close, ignore_invalid_symbol=true)
+        float htfSma = request.security(syminfo.tickerid, htfTf, ta.sma(close, 50), ignore_invalid_symbol=true)
+        if not na(htfClose) and not na(htfSma)
+            htfStr := " | LTF:" + (uptrend ? "▲" : "▼") + " HTF:" + (htfClose > htfSma ? "▲" : "▼")
+    
+    string headerText = presetDisplay + " | " + modeTag + confirmTag + htfStr
     table.cell(dashboard, 0, 0, headerText, text_color=color.white, text_size=dashHeaderSize)
 
     // Column headers (width=0 auto-fits to content)
