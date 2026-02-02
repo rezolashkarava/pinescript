@@ -1,9 +1,20 @@
 //@version=6
-indicator("ICT Order Block Pro [Paganie] v3.6.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("ICT Order Block Pro [Paganie] v3.7.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
-// ICT ORDER BLOCK PRO V3.6.0 - INSTITUTIONAL SMART MONEY CONCEPTS
+// ICT ORDER BLOCK PRO V3.7.0 - INSTITUTIONAL SMART MONEY CONCEPTS
 // Professional-grade order block detection with ICT/SMC methodology
+//
+// V3.7.0 - Crypto-Optimized Defaults + Performance:
+// • Crypto Filters module enabled by default (BTC.D, OI, weekend penalty)
+// • Liquidity event alerts ON by default
+// • Liquidity runs (continuation) displayed by default
+// • Volume scoring boosted (2.0x multiplier) for crypto volatility
+// • Sweep lookback extended to 25 bars for manipulation patterns
+// • VP lookback increased to 120 bars for better volume analysis
+// • Power neutral band widened to 12% for crypto volatility
+// • Max liquidity levels increased to 8 for more pool tracking
+// • Performance: Consolidated security calls (5→1), single-pass block processing
 //
 // V3.6.0 - Locked Settings for Optimal Performance:
 // • Settings reduced to ~20 essential controls
@@ -145,7 +156,7 @@ alertNewOB = input.bool(true, "New Order Block", group=GRP_ALERT)
 alertTouch = input.bool(true, "Zone Touch", group=GRP_ALERT)
 alertReject = input.bool(true, "Rejection", group=GRP_ALERT)
 alertProximity = input.bool(true, "Approaching Zone", group=GRP_ALERT, tooltip="Alert when price approaches OB zones.")
-alertLiquidity = input.bool(false, "Liquidity Events", group=GRP_ALERT, tooltip="Alert on sweeps and liquidity runs.")
+alertLiquidity = input.bool(true, "Liquidity Events", group=GRP_ALERT, tooltip="Alert on sweeps and liquidity runs. Essential for crypto trading.")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // COLORS
@@ -155,6 +166,21 @@ bullBorder = input.color(color.new(#00ff88, 0), "Bullish", group=GRP_COL)
 bearBorder = input.color(color.new(#ff3366, 0), "Bearish", group=GRP_COL)
 bslColor = input.color(color.new(#00bfff, 30), "BSL Level", group=GRP_COL)
 sslColor = input.color(color.new(#ff6600, 30), "SSL Level", group=GRP_COL)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CRYPTO FILTERS (Optional Module)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_CRYPTO = "🪙 Crypto Filters"
+i_cryptoModule = input.bool(true, "Enable Crypto Filters", group=GRP_CRYPTO,
+     tooltip="Enable crypto-specific scoring factors (BTC.D, OI, weekend penalty). Optimized for crypto trading.")
+i_useBtcDom = input.bool(true, "BTC Dominance Filter", group=GRP_CRYPTO,
+     tooltip="Boost demand zones during alt season, supply zones during BTC dominance.")
+i_useBtcCorr = input.bool(true, "BTC Correlation", group=GRP_CRYPTO,
+     tooltip="Boost zones aligned with BTC trend direction (for altcoins).")
+i_useOI = input.bool(true, "Open Interest Filter", group=GRP_CRYPTO,
+     tooltip="Boost zones confirmed by Open Interest buildup.")
+i_useWeekend = input.bool(true, "Weekend Penalty", group=GRP_CRYPTO,
+     tooltip="Reduce score for zones formed on weekends (low liquidity).")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -198,10 +224,10 @@ int fillAlpha = input.int(75, "Block Opacity", minval=0, maxval=100, group=GRP_I
 bool showRetests = input.bool(true, "Show Retest Labels", group=GRP_INT)
 
 // Strength Scoring
-float volScoreMult = input.float(1.5, "Volume Score Mult", step=0.1, group=GRP_INT)
+float volScoreMult = input.float(2.0, "Volume Score Mult", step=0.1, group=GRP_INT)
 float bodyScoreMult = input.float(1.5, "Body Score Mult", step=0.1, group=GRP_INT)
 int vpScoreBoost = input.int(1, "VP Score Boost", minval=0, group=GRP_INT)
-int vpLookback = input.int(100, "VP Lookback", minval=10, group=GRP_INT)
+int vpLookback = input.int(120, "VP Lookback", minval=10, group=GRP_INT)
 float vpThreshold = input.float(1.5, "VP Concentration Threshold", step=0.1, group=GRP_INT)
 bool eliteRequiresVP = input.bool(true, "Elite Requires VP", group=GRP_INT)
 string maxBlocksUser = input.string("Auto", "Max Active Blocks", options=["Auto", "5", "8", "10", "15", "20"], group=GRP_INT)
@@ -209,13 +235,13 @@ string maxBlocksUser = input.string("Auto", "Max Active Blocks", options=["Auto"
 // Liquidity Settings
 bool showLiquidityLevels = input.bool(true, "Show LQ Levels", group=GRP_INT)
 bool showSweepEvents = input.bool(true, "Show Sweep Events", group=GRP_INT)
-bool showLiquidityRuns = input.bool(false, "Show LQ Runs (Continuation)", group=GRP_INT)
+bool showLiquidityRuns = input.bool(true, "Show LQ Runs (Continuation)", group=GRP_INT)
 bool markEqualHL = input.bool(true, "Mark Equal H/L", group=GRP_INT)
-int sweepLookback = input.int(20, "Sweep Lookback", minval=5, group=GRP_INT)
+int sweepLookback = input.int(25, "Sweep Lookback", minval=5, group=GRP_INT)
 float equalHLThreshold = input.float(0.1, "Equal H/L Threshold (%)", step=0.05, group=GRP_INT)
 float sweepWickMin = input.float(0.5, "Sweep Wick Min (ATR)", step=0.1, group=GRP_INT)
 bool requireVolumeSpike = input.bool(true, "Sweep Requires Volume", group=GRP_INT)
-int maxLiquidityLevelsInput = input.int(6, "Max LQ Levels", minval=1, maxval=20, group=GRP_INT)
+int maxLiquidityLevelsInput = input.int(8, "Max LQ Levels", minval=1, maxval=20, group=GRP_INT)
 color sweepBullColor = input.color(color.new(#00ff88, 20), "Sweep Bull Color", group=GRP_INT)
 color sweepBearColor = input.color(color.new(#ff3366, 20), "Sweep Bear Color", group=GRP_INT)
 
@@ -228,7 +254,7 @@ string powerMode = input.string("Auto", "Power Mode", options=["Auto", "Custom"]
 string powerLtf = input.string("1", "Power LTF", options=["1", "5", "15", "60", "240"], group=GRP_INT)
 string powerVolumeMethod = input.string("Pressure", "Power Volume Method", options=["Pressure", "Polarity"], group=GRP_INT)
 string powerTieBreak = input.string("Carry last direction", "Power Tie Break", options=["Carry last direction", "Use prev intrabar close", "Ignore dojis"], group=GRP_INT)
-float powerNeutralBandPct = input.float(10.0, "Power Neutral Band", step=1.0, group=GRP_INT)
+float powerNeutralBandPct = input.float(12.0, "Power Neutral Band", step=1.0, group=GRP_INT)
 int powerFlipConfirmBars = input.int(0, "Power Confirm Bars (0=Auto)", minval=0, group=GRP_INT)
 int powerSmoothingLen = input.int(8, "Power Smoothing", minval=1, group=GRP_INT)
 string powerSmoothingType = input.string("EMA", "Smoothing Type", options=["EMA", "SMA"], group=GRP_INT)
@@ -426,17 +452,34 @@ else
     effectiveNeutralBandPct := powerNeutralBandPct
     effectivePowerMinIntrabars := powerMinIntrabars
 
-// Request intrabar data (only 3 calls for efficiency)
+// Request intrabar data - OPTIMIZED: Single tuple call instead of 5 separate calls
 // These return arrays of values for each intrabar within the current chart bar
+// Gated by showPowerRow to skip entirely when Power Row is disabled
 int chartTfSec = timeframe.in_seconds()
 int powerTfSec = timeframe.in_seconds(effectivePowerLtf)
 string powerLtfSafe = powerTfSec <= chartTfSec ? effectivePowerLtf : timeframe.period
 
-arrOpen = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, open, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrHigh = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, high, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrLow = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, low, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrClose = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, close, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrVol = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, volume, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+// PERFORMANCE: Consolidated into single request with tuple expression (5 calls → 1 call)
+// Note: Must use if/else since ternary cannot return tuples in Pine Script
+var array<float> arrOpen = array.new<float>()
+var array<float> arrHigh = array.new<float>()
+var array<float> arrLow = array.new<float>()
+var array<float> arrClose = array.new<float>()
+var array<float> arrVol = array.new<float>()
+
+if showPowerRow
+    [o, h, l, c, v] = request.security_lower_tf(syminfo.tickerid, powerLtfSafe, [open, high, low, close, volume], ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+    arrOpen := o
+    arrHigh := h
+    arrLow := l
+    arrClose := c
+    arrVol := v
+else
+    arrOpen := array.new<float>()
+    arrHigh := array.new<float>()
+    arrLow := array.new<float>()
+    arrClose := array.new<float>()
+    arrVol := array.new<float>()
 
 // Calculate Power metrics from intrabar data
 // Supports both Polarity (binary) and Pressure (proportional) methods
@@ -511,20 +554,30 @@ calcPower(string method, string tieBreakRule) =>
     
     [buyVol, sellVol, intrabarCount]
 
-[rawBuyVol, rawSellVol, intrabarCount] = calcPower(powerVolumeMethod, effectivePowerTieBreak)
+// PERFORMANCE: Gate all Power calculations by showPowerRow
+// Note: Must use if/else since ternary cannot return tuples in Pine Script
+float rawBuyVol = 0.0
+float rawSellVol = 0.0
+int intrabarCount = 0
+if showPowerRow
+    [b, s, c] = calcPower(powerVolumeMethod, effectivePowerTieBreak)
+    rawBuyVol := b
+    rawSellVol := s
+    intrabarCount := c
 
-// Compute delta and percentage
-float rawDelta = rawBuyVol - rawSellVol
-float rawTotal = rawBuyVol + rawSellVol
-float rawPowerPct = rawTotal > 0 ? 100.0 * math.abs(rawDelta) / rawTotal : na
+// Compute delta and percentage (only when Power Row enabled)
+float rawDelta = showPowerRow ? rawBuyVol - rawSellVol : 0.0
+float rawTotal = showPowerRow ? rawBuyVol + rawSellVol : 0.0
+float rawPowerPct = showPowerRow and rawTotal > 0 ? 100.0 * math.abs(rawDelta) / rawTotal : na
 
 // Apply smoothing for display stability (uses effective length)
-float smoothedPowerPct = powerSmoothingType == "EMA" ? 
-     ta.ema(rawPowerPct, effectiveSmoothingLen) : 
-     ta.sma(rawPowerPct, effectiveSmoothingLen)
+// PERFORMANCE: ta.ema/sma still need to run to maintain series consistency, but will use na input when disabled
+float smoothedPowerPct = showPowerRow ? (powerSmoothingType == "EMA" ?
+     ta.ema(rawPowerPct, effectiveSmoothingLen) :
+     ta.sma(rawPowerPct, effectiveSmoothingLen)) : na
 
 // Determine RAW side from delta (before stability filters)
-int rawPowerSide = rawDelta > 0 ? 1 : (rawDelta < 0 ? -1 : 0)  // 1=BUY, -1=SELL, 0=NEUTRAL
+int rawPowerSide = showPowerRow ? (rawDelta > 0 ? 1 : (rawDelta < 0 ? -1 : 0)) : 0  // 1=BUY, -1=SELL, 0=NEUTRAL
 
 // === STABILITY FILTERS ===
 // 1) Neutral band: if powerPct is in the neutral zone, force NEUTRAL
@@ -614,6 +667,7 @@ type OrderBlock
     int lastRetestCount     // For label rebuild check
     bool lastTouched
     bool lastRejected
+    string formattedVol     // PERFORMANCE: Cached formatted volume string
 
 type LiquiditySweep
     line levelLine           // Horizontal line at swing high/low
@@ -635,10 +689,18 @@ type LiquiditySweep
 
 // Dashboard size helpers (must be before renderDashboardRow)
 getDashTextSize() =>
-    dashboardSize == "Tiny" ? size.tiny : dashboardSize == "Normal" ? size.normal : size.small
+    string result = size.small
+    if dashboardSize == "Tiny"
+        result := size.tiny
+    else if dashboardSize == "Normal"
+        result := size.normal
+    result
 
 getDashHeaderSize() =>
-    dashboardSize == "Tiny" ? size.tiny : dashboardSize == "Normal" ? size.small : size.small
+    string result = size.small
+    if dashboardSize == "Tiny"
+        result := size.tiny
+    result
 
 string dashTextSize = getDashTextSize()
 string dashHeaderSize = getDashHeaderSize()
@@ -650,7 +712,7 @@ renderDashboardRow(table tbl, int row, OrderBlock b, string dirLabel, color dirC
     // Render regardless of distance; negative means price is beyond the zone
     if row <= 7  // Leave rows 8-9 for Power
         table.cell(tbl, 0, row, dirLabel, text_color=dirCol, text_size=dashTextSize, width=0)
-        table.cell(tbl, 1, row, formatVolume(b.totalVolume), text_color=dirCol, text_size=dashTextSize, width=0)
+        table.cell(tbl, 1, row, b.formattedVol, text_color=dirCol, text_size=dashTextSize, width=0)  // PERFORMANCE: Use cached formatted volume
         table.cell(tbl, 2, row, str.tostring(round2(dist)) + "%", text_color=color.white, text_size=dashTextSize, width=0)
 
         color strengthCol = b.strength == "Elite" ? color.yellow : b.strength == "Strong" ? dirCol : b.strength == "Mid" ? color.orange : color.gray
@@ -695,6 +757,41 @@ float atr = ta.atr(14)
 float avgVol = ta.sma(volume, 20)
 float avgBody = ta.sma(math.abs(close - open), 20)
 float sma50 = ta.sma(close, 50)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CRYPTO MARKET REGIME ENGINE (Optional Module) - OPTIMIZED
+// All calculations gated by i_cryptoModule to skip when disabled
+// ══════════════════════════════════════════════════════════════════════════════
+
+// --- BTC Chart Detection (only computed when crypto module active) ---
+bool is_btc_chart = i_cryptoModule ? str.contains(str.lower(syminfo.ticker), "btc") : false
+
+// --- BTC Dominance Detection ---
+float btc_dom = i_cryptoModule and i_useBtcDom ? request.security("BTC.D", timeframe.period, close, ignore_invalid_symbol=true) : na
+float btc_dom_sma = i_cryptoModule and i_useBtcDom and not na(btc_dom) ? ta.sma(btc_dom, 30) : na
+
+// BTC.D Regime: 1 = alt season (favorable for alts), -1 = BTC dominance (risk-off), 0 = neutral
+int btc_regime = 0
+if i_cryptoModule and i_useBtcDom and not na(btc_dom) and not na(btc_dom_sma)
+    if btc_dom > 60 and btc_dom > btc_dom_sma
+        btc_regime := -1  // BTC dominance rising - risk-off for alts
+    else if btc_dom < 55 and btc_dom < btc_dom_sma
+        btc_regime := 1   // Alt season - favorable for alts
+
+// --- BTC Price Correlation ---
+float btc_close = i_cryptoModule and i_useBtcCorr ? (is_btc_chart ? close : request.security("BTCUSDT", timeframe.period, close, ignore_invalid_symbol=true)) : na
+float btc_sma = i_cryptoModule and i_useBtcCorr and not na(btc_close) ? ta.sma(btc_close, 50) : na
+int btc_trend = i_cryptoModule and not na(btc_close) and not na(btc_sma) ? (btc_close > btc_sma ? 1 : -1) : 0
+
+// --- Open Interest Data ---
+string oi_ticker = syminfo.ticker + "_OI"
+float oi_data = i_cryptoModule and i_useOI ? request.security(oi_ticker, timeframe.period, close, ignore_invalid_symbol=true) : na
+float oi_change = i_cryptoModule and i_useOI and not na(oi_data) ? ta.change(oi_data) : na
+bool oi_bullish = i_cryptoModule and not na(oi_change) and oi_change > 0 and close > close[1]
+bool oi_bearish = i_cryptoModule and not na(oi_change) and oi_change > 0 and close < close[1]
+
+// --- Weekend Detection (only when crypto module enabled) ---
+bool is_weekend = i_cryptoModule and i_useWeekend ? (dayofweek == dayofweek.saturday or dayofweek == dayofweek.sunday) : false
 
 // Premium/Discount Zone Calculation (ICT concept)
 // Auto-scale lookback based on timeframe for optimal zone responsiveness
@@ -1045,7 +1142,35 @@ analyzeVolumeProfile(float obTop, float obBot, int lookback) =>
 
     volumeConcentration
 
-getStrength(float vol, float body, bool trendAlign) =>
+// === CRYPTO SCORE BOOST HELPER ===
+// Returns score adjustment based on crypto market conditions
+getCryptoScoreBoost(bool isBullOB, int barOffset) =>
+    int boost = 0
+    if not i_cryptoModule
+        boost
+    else
+        // BTC Correlation (+1 for alignment) - only for altcoins
+        if i_useBtcCorr and not is_btc_chart and btc_trend != 0
+            if (isBullOB and btc_trend == 1) or (not isBullOB and btc_trend == -1)
+                boost += 1
+
+        // BTC.D Regime (+1 for favorable regime)
+        if i_useBtcDom and btc_regime != 0
+            if (isBullOB and btc_regime >= 0) or (not isBullOB and btc_regime <= 0)
+                boost += 1
+
+        // OI Confirmation (+1)
+        if i_useOI and not na(oi_data)
+            if (isBullOB and oi_bullish[barOffset]) or (not isBullOB and oi_bearish[barOffset])
+                boost += 1
+
+        // Weekend Penalty (-1)
+        if i_useWeekend and is_weekend[barOffset]
+            boost -= 1
+
+        boost
+
+getStrength(float vol, float body, bool trendAlign, bool isBullOB, int barOffset) =>
     int score = 0
     if useVolume and vol > avgVol * volScoreMult
         score += 1
@@ -1053,11 +1178,15 @@ getStrength(float vol, float body, bool trendAlign) =>
         score += 1
     if trendAlign
         score += 1
+
+    // Add crypto boost
+    score += getCryptoScoreBoost(isBullOB, barOffset)
+
     score >= 2 ? "Strong" : score == 1 ? "Mid" : "Weak"
 
-getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentration) =>
+getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentration, bool isBullOB, int barOffset) =>
     int score = 0
-    
+
     // Base scoring (user-configurable)
     if useVolume and vol > avgVol * volScoreMult
         score += 1
@@ -1065,12 +1194,15 @@ getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentratio
         score += 1
     if trendAlign
         score += 1
-    
+
+    // Crypto boost (optional module)
+    score += getCryptoScoreBoost(isBullOB, barOffset)
+
     // Volume Profile boost (Premium feature - user-configurable)
     bool hasVPConfirmation = useVolumeProfile and vpConcentration >= vpThreshold
     if hasVPConfirmation
         score += vpScoreBoost
-    
+
     // Enhanced rating with VP (user can configure if Elite requires VP)
     if useVolumeProfile
         if eliteRequiresVP
@@ -1391,9 +1523,8 @@ createSweepLabel(float level, float wickExtent, int sweepBar, bool isBullish, st
     color txtCol = isBullish ? sweepBullColor : sweepBearColor
     // Position label above (bearish) or below (bullish) the wick
     float labelPrice = isBullish ? level - wickExtent : level + wickExtent
-    string labelStyle = isBullish ? label.style_label_up : label.style_label_down
     label lbl = label.new(sweepBar, labelPrice, txt, xloc=xloc.bar_index, yloc=yloc.price,
-         color=color.new(#1a1a1a, 15), style=labelStyle, textcolor=txtCol, size=size.small)
+         color=color.new(#1a1a1a, 15), style=isBullish ? label.style_label_up : label.style_label_down, textcolor=txtCol, size=size.small)
     lbl
 
 createVolumeLabel(OrderBlock block) =>
@@ -1429,21 +1560,51 @@ deleteBlock(OrderBlock block) =>
         for i = 0 to cornerCount - 1
             box.delete(array.get(block.cornerBoxes, i))
 
-processBlocks(array<OrderBlock> blocks, bool isBull) =>
+// PERFORMANCE OPTIMIZED: Combined single-pass processing
+// Merges processBlocks + updateBlocks + isInAnyBlock into ONE iteration
+// Returns: [touched, rejected, isInAny]
+processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int currentTime) =>
     bool touched = false
     bool rejected = false
-    
+    bool isInAny = false
+
     int blockCount = array.size(blocks)
     if blockCount > 0
+        // Pre-compute mode checks outside loop (avoid repeated string comparisons)
+        bool useWickMode = touchMode == "Wick"
+        bool isNewBar = barstate.isnew or barstate.isfirst
+        int safeSegments = math.max(segments, 1)
+
         for i = blockCount - 1 to 0
             OrderBlock block = array.get(blocks, i)
-            
+
+            // --- VISUAL UPDATE (from updateBlock) ---
+            if isNewBar
+                // Update gradient boxes - extend to current bar
+                int volBoxCount = array.size(block.volumeBoxes)
+                if volBoxCount > 0
+                    int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
+                    for j = 0 to maxIdx
+                        box.set_right(array.get(block.volumeBoxes, j), bar_index)
+
+                // Update border lines
+                if not na(block.topLine)
+                    line.set_x2(block.topLine, currentTime)
+                if not na(block.botLine)
+                    line.set_x2(block.botLine, currentTime)
+
+                // Update label position
+                if not na(block.volLabel)
+                    label.set_x(block.volLabel, currentTime)
+
+                block.lastUpdateBar := bar_index
+
             if not block.mitigated
-                // Check mitigation (user-configurable)
+                // --- MITIGATION CHECK ---
                 bool mitigated = false
                 float zoneHeight = block.top - block.bot
                 float minPenetration = math.max(zoneHeight * minPenZonePct, atr * minPenAtrPct)
-                
+
                 if mitigationMethod == "Wick"
                     mitigated := isBull ? low < block.bot - minPenetration : high > block.top + minPenetration
                 else if mitigationMethod == "Close"
@@ -1451,21 +1612,18 @@ processBlocks(array<OrderBlock> blocks, bool isBull) =>
                 else  // Mean
                     float mean = block.bot + (zoneHeight * meanMitigationLevel)
                     mitigated := isBull ? close < mean : close > mean
-                
+
                 if mitigated
                     block.mitigated := true
                     deleteBlock(block)
                     array.remove(blocks, i)
                     continue
-                
-                // Track touches (user-configurable)
-                bool inZone = false
-                if touchMode == "Wick"
-                    inZone := low <= block.top and high >= block.bot
-                else  // "Close inside zone"
-                    inZone := close >= block.bot and close <= block.top
-                
+
+                // --- TOUCH/ZONE CHECK (also computes isInAny) ---
+                bool inZone = useWickMode ? (low <= block.top and high >= block.bot) : (close >= block.bot and close <= block.top)
+
                 if inZone
+                    isInAny := true  // For isInAnyBlock functionality
                     if retestDebounce == "Require exit before recount"
                         if not block.touched
                             block.touched := true
@@ -1476,34 +1634,47 @@ processBlocks(array<OrderBlock> blocks, bool isBull) =>
                         touched := true
                         block.touched := true
                 else
-                    // Reset touched flag when price exits the zone
                     if block.touched
                         block.touched := false
-                
-                // Track rejections (user-configurable)
+
+                // --- REJECTION CHECK ---
                 if enableRejection
                     float rejectionLevel = 0.0
-                    
+
                     if rejectionCloseLevel == "Mid"
                         rejectionLevel := (block.top + block.bot) / 2
                     else if rejectionCloseLevel == "Top/Bottom"
                         rejectionLevel := isBull ? block.top : block.bot
                     else  // "Percent into zone"
                         rejectionLevel := isBull ? (block.bot + (zoneHeight * rejectionPercent)) : (block.top - (zoneHeight * rejectionPercent))
-                    
+
                     if isBull
                         if low <= block.bot and close >= rejectionLevel
-                            if not block.rejected  // Only trigger once
+                            if not block.rejected
                                 block.rejected := true
                                 rejected := true
                     else
                         if high >= block.top and close <= rejectionLevel
-                            if not block.rejected  // Only trigger once
+                            if not block.rejected
                                 block.rejected := true
                                 rejected := true
-    
-    [touched, rejected]
 
+                // --- LABEL UPDATE (only on state change) ---
+                if showAnyLabel and not na(block.volLabel)
+                    bool stateChanged = block.retestCount != block.lastRetestCount or
+                                       block.touched != block.lastTouched or
+                                       block.rejected != block.lastRejected
+                    if stateChanged
+                        float labelY = block.top - (block.top - block.bot) * 0.25
+                        label.set_y(block.volLabel, labelY)
+                        label.set_text(block.volLabel, buildLabelText(block))
+                        block.lastRetestCount := block.retestCount
+                        block.lastTouched := block.touched
+                        block.lastRejected := block.rejected
+
+    [touched, rejected, isInAny]
+
+// Keep legacy updateBlock for any direct calls (used by updateBlocks wrapper if needed)
 updateBlock(OrderBlock block, int currentTime, int segments) =>
     // Only extend visuals on new bars (not every tick)
     bool isNewBar = na(block.lastUpdateBar) or bar_index > block.lastUpdateBar
@@ -1590,10 +1761,10 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
         // Volume Profile analysis (Premium feature)
         float vpConcentration = useVolumeProfile ? analyzeVolumeProfile(top, bot, vpLookbackEff) : 0.0
         
-        // Enhanced strength with VP
+        // Enhanced strength with VP and crypto boost
         string strength = useVolumeProfile ?
-             getEnhancedStrength(vol, body, aligned, vpConcentration) :
-             getStrength(vol, body, aligned)
+             getEnhancedStrength(vol, body, aligned, vpConcentration, isBull, idx) :
+             getStrength(vol, body, aligned, isBull, idx)
 
         // Filter: Skip weak/mid blocks if only showing Strong/Elite
         bool skipNewBlock = showOnlyStrongElite and strength != "Strong" and strength != "Elite"
@@ -1630,12 +1801,15 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
             float relVol = (not na(avgVol) and avgVol > 0) ? vol / avgVol : 1.0
             int direction = isBull ? DIR_BULL : DIR_BEAR
 
+            // PERFORMANCE: Pre-format volume string (avoids repeated formatting in dashboard)
+            string fmtVol = formatVolume(vol)
+
             // Create new block
             OrderBlock newBlock = OrderBlock.new(
                  array.new<box>(), na, na, na, na, array.new<box>(),
                  top, bot, direction,
                  vol, relVol, strength, false, 0, false, false,
-                 na, 0, false, false)  // State tracking: lastUpdateBar, lastRetestCount, lastTouched, lastRejected
+                 na, 0, false, false, fmtVol)  // State tracking + cached formattedVol
             
             box[] volBoxes = createVolumeGradient(newBlock, leftBar, effectiveGridSegments, effectiveRenderMode)
             newBlock.volumeBoxes := volBoxes
@@ -1946,41 +2120,18 @@ int bearIdx = detectionMethod == "Scalper" ? scalperBearIdx : actualLookback
 newBullOB := createOrderBlock(bullIdx, true, bullBlocks, shouldCreateBull)
 newBearOB := createOrderBlock(bearIdx, false, bearBlocks, shouldCreateBear)
 
-// === UPDATE & MITIGATION ===
-// Update all blocks first (for proper anchoring)
-updateBlocks(bullBlocks, effectiveGridSegments)
-updateBlocks(bearBlocks, effectiveGridSegments)
-
-// Then check mitigation and touches
-[bullTouchTmp, bullRejectTmp] = processBlocks(bullBlocks, true)
+// === UPDATE & MITIGATION (OPTIMIZED: Single-pass processing) ===
+// PERFORMANCE: Combined update + process + isInAny check into single iteration
+// Reduces 5 array iterations to 2 (one per side)
+[bullTouchTmp, bullRejectTmp, inBullOBNow] = processAndUpdateBlocks(bullBlocks, true, effectiveGridSegments, time)
 bullTouch := bullTouchTmp
 bullReject := bullRejectTmp
-[bearTouchTmp, bearRejectTmp] = processBlocks(bearBlocks, false)
+[bearTouchTmp, bearRejectTmp, inBearOBNow] = processAndUpdateBlocks(bearBlocks, false, effectiveGridSegments, time)
 bearTouch := bearTouchTmp
 bearReject := bearRejectTmp
 
 // === OB TOUCH ANTI-SPAM LATCH ===
-// Compute "in zone" state per side (must respect touchMode setting)
-// This checks if price overlaps ANY active (non-mitigated) block of each side
-isInAnyBlock(array<OrderBlock> blocks, string mode) =>
-    bool inAny = false
-    int blockCount = array.size(blocks)
-    if blockCount > 0
-        // Pre-compute mode check outside loop
-        bool useWickMode = mode == "Wick"
-        for i = 0 to blockCount - 1
-            OrderBlock b = array.get(blocks, i)
-            if b.mitigated
-                continue
-            // Respect touchMode setting (same logic as retest detection)
-            bool inZone = useWickMode ? (low <= b.top and high >= b.bot) : (close >= b.bot and close <= b.top)
-            if inZone
-                inAny := true
-                break
-    inAny
-
-bool inBullOBNow = isInAnyBlock(bullBlocks, touchMode)
-bool inBearOBNow = isInAnyBlock(bearBlocks, touchMode)
+// inBullOBNow and inBearOBNow now come from the combined function above
 
 // Edge-trigger: fire alert only on FIRST entry into any OB zone of that side
 bool bullTouchTrigger = inBullOBNow and not wasInBullOB
@@ -2287,3 +2438,8 @@ alertcondition(enableLiquidity and alertLiquidityRun and bullRunDetected, "SSL R
 // Liquidity Proximity Alerts (edge-triggered: fires once per approach, re-arms when price exits)
 alertcondition(enableLiquidity and alertApproachingLiquidity and triggerNearBSL, "Approaching BSL", "Price approaching buy-side liquidity on {{ticker}} {{interval}}")
 alertcondition(enableLiquidity and alertApproachingLiquidity and triggerNearSSL, "Approaching SSL", "Price approaching sell-side liquidity on {{ticker}} {{interval}}")
+
+// === CRYPTO REGIME ALERTS ===
+// Alerts for BTC.D regime shifts (gated by crypto module)
+alertcondition(i_cryptoModule and i_useBtcDom and btc_regime == 1 and btc_regime[1] != 1, "Alt Season Signal", "🌊 BTC.D falling on {{ticker}} {{interval}} - Alt season favorable for altcoins")
+alertcondition(i_cryptoModule and i_useBtcDom and btc_regime == -1 and btc_regime[1] != -1, "BTC Dominance Signal", "⚠️ BTC.D rising on {{ticker}} {{interval}} - Risk-off for altcoins")
