@@ -157,74 +157,82 @@ bslColor = input.color(color.new(#00bfff, 30), "BSL Level", group=GRP_COL)
 sslColor = input.color(color.new(#ff6600, 30), "SSL Level", group=GRP_COL)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// OPTIMAL PARAMETERS (Locked for best performance)
-// These are auto-optimized based on timeframe - not user-adjustable
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INTERNAL TUNING (Exposed for Power Users)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_INT = "🛠️ Internal Tuning"
+
 // Detection
-int scalperLookback = 10
-int obScanWindow = 3
-int gridSegments = 10
-float dispAtrBodyMult = 0.8
-float dispBodyToRangeMin = 0.6
-bool useDisplacement = true
-bool useFVG = true
-bool useMSB = true
-bool useVolume = true
-string fvgMode = "Classic 3-candle"
-float fvgMinGapAtr = 0.0
-int msbLookback = 10
-bool msbUsePivotFallback = true
+int scalperLookback = input.int(10, "Scalper Lookback", minval=1, group=GRP_INT)
+int obScanWindow = input.int(3, "OB Scan Window", minval=1, group=GRP_INT, tooltip="Candidates to scan back from impulse.")
+int gridSegments = input.int(10, "Gradient Segments", minval=2, maxval=20, group=GRP_INT)
+float dispAtrBodyMult = input.float(0.8, "Displacement Body (ATR)", step=0.1, group=GRP_INT, tooltip="Min body size relative to ATR.")
+float dispBodyToRangeMin = input.float(0.6, "Displacement % of Range", step=0.05, group=GRP_INT)
+bool useDisplacement = input.bool(true, "Require Displacement", group=GRP_INT)
+bool useFVG = input.bool(true, "Require FVG", group=GRP_INT)
+bool useMSB = input.bool(true, "Require MSB", group=GRP_INT)
+bool useVolume = input.bool(true, "Use Volume Filter", group=GRP_INT)
+
+// FVG Settings
+string fvgMode = input.string("Classic 3-candle", "FVG Mode", options=["Classic 3-candle", "Strict (body gap)", "Loose (wick gap)", "Off"], group=GRP_INT)
+float fvgMinGapAtr = input.float(0.0, "Min FVG Gap (ATR)", step=0.1, group=GRP_INT)
+
+// MSB Settings
+int msbLookback = input.int(10, "MSB Lookback", minval=1, group=GRP_INT)
+bool msbUsePivotFallback = input.bool(true, "MSB Pivot Fallback", group=GRP_INT)
 
 // Zones
-float smartSizeAtrMult = 1.2
-string smartAnchor = "Wick"
-string mitigationMode = "Auto"
-float minPenZonePct = 0.10
-float minPenAtrPct = 0.05
-float meanMitigationLevel = 0.5
-string touchMode = "Wick"
-string retestDebounce = "Require exit before recount"
-string rejectionCloseLevel = "Mid"
-float rejectionPercent = 0.5
-int fillAlpha = 75
-bool showRetests = true
+float smartSizeAtrMult = input.float(1.2, "Smart Size (ATR)", step=0.1, group=GRP_INT)
+string smartAnchor = input.string("Wick", "Zone Anchor", options=["Wick", "Close"], group=GRP_INT)
+string mitigationMode = input.string("Auto", "Mitigation Mode", options=["Auto", "Wick", "Close", "Mean"], group=GRP_INT)
+float minPenZonePct = input.float(0.10, "Min Penetration (% Zone)", step=0.05, group=GRP_INT)
+float minPenAtrPct = input.float(0.05, "Min Penetration (% ATR)", step=0.01, group=GRP_INT)
+float meanMitigationLevel = input.float(0.5, "Mean Mitigation Level", step=0.1, group=GRP_INT, tooltip="0.5 = 50% into zone.")
 
-// Strength
-float volScoreMult = 1.5
-float bodyScoreMult = 1.5
-int vpScoreBoost = 1
-int vpLookback = 100
-float vpThreshold = 1.5
-bool eliteRequiresVP = true
-string maxBlocksUser = "Auto"
+// Touch & Retest
+string touchMode = input.string("Wick", "Touch Mode", options=["Wick", "Close"], group=GRP_INT)
+string retestDebounce = input.string("Require exit before recount", "Retest Count Mode", options=["Require exit before recount", "Count each bar in zone"], group=GRP_INT)
+string rejectionCloseLevel = input.string("Mid", "Rejection Target", options=["Mid", "Top/Bottom", "Percent into zone"], group=GRP_INT)
+float rejectionPercent = input.float(0.5, "Rejection %", step=0.1, group=GRP_INT)
+int fillAlpha = input.int(75, "Block Opacity", minval=0, maxval=100, group=GRP_INT)
+bool showRetests = input.bool(true, "Show Retest Labels", group=GRP_INT)
 
-// Liquidity
-bool showLiquidityLevels = true
-bool showSweepEvents = true
-bool showLiquidityRuns = false
-bool markEqualHL = true
-int sweepLookback = 20
-float equalHLThreshold = 0.1
-float sweepWickMin = 0.5
-bool requireVolumeSpike = true
-int maxLiquidityLevelsInput = 6
-color sweepBullColor = color.new(#00ff88, 20)
-color sweepBearColor = color.new(#ff3366, 20)
+// Strength Scoring
+float volScoreMult = input.float(1.5, "Volume Score Mult", step=0.1, group=GRP_INT)
+float bodyScoreMult = input.float(1.5, "Body Score Mult", step=0.1, group=GRP_INT)
+int vpScoreBoost = input.int(1, "VP Score Boost", minval=0, group=GRP_INT)
+int vpLookback = input.int(100, "VP Lookback", minval=10, group=GRP_INT)
+float vpThreshold = input.float(1.5, "VP Concentration Threshold", step=0.1, group=GRP_INT)
+bool eliteRequiresVP = input.bool(true, "Elite Requires VP", group=GRP_INT)
+string maxBlocksUser = input.string("Auto", "Max Active Blocks", options=["Auto", "5", "8", "10", "15", "20"], group=GRP_INT)
 
-// Alerts
-float proximityThreshold = 1.0
-float liquidityProximityPct = 0.5
+// Liquidity Settings
+bool showLiquidityLevels = input.bool(true, "Show LQ Levels", group=GRP_INT)
+bool showSweepEvents = input.bool(true, "Show Sweep Events", group=GRP_INT)
+bool showLiquidityRuns = input.bool(false, "Show LQ Runs (Continuation)", group=GRP_INT)
+bool markEqualHL = input.bool(true, "Mark Equal H/L", group=GRP_INT)
+int sweepLookback = input.int(20, "Sweep Lookback", minval=5, group=GRP_INT)
+float equalHLThreshold = input.float(0.1, "Equal H/L Threshold (%)", step=0.05, group=GRP_INT)
+float sweepWickMin = input.float(0.5, "Sweep Wick Min (ATR)", step=0.1, group=GRP_INT)
+bool requireVolumeSpike = input.bool(true, "Sweep Requires Volume", group=GRP_INT)
+int maxLiquidityLevelsInput = input.int(6, "Max LQ Levels", minval=1, maxval=20, group=GRP_INT)
+color sweepBullColor = input.color(color.new(#00ff88, 20), "Sweep Bull Color", group=GRP_INT)
+color sweepBearColor = input.color(color.new(#ff3366, 20), "Sweep Bear Color", group=GRP_INT)
 
-// Power Row
-string powerMode = "Auto"
-string powerLtf = "1"
-string powerVolumeMethod = "Pressure"
-string powerTieBreak = "Carry last direction"
-float powerNeutralBandPct = 10.0
-int powerFlipConfirmBars = 0
-int powerSmoothingLen = 8
-string powerSmoothingType = "EMA"
-int powerMinIntrabars = 4
+// Alert Tuning
+float proximityThreshold = input.float(1.0, "Alert Proximity (%)", step=0.1, group=GRP_INT)
+float liquidityProximityPct = input.float(0.5, "LQ Alert Proximity (%)", step=0.1, group=GRP_INT)
+
+// Power Row Tuning
+string powerMode = input.string("Auto", "Power Mode", options=["Auto", "Custom"], group=GRP_INT)
+string powerLtf = input.string("1", "Power LTF", options=["1", "5", "15", "60", "240"], group=GRP_INT)
+string powerVolumeMethod = input.string("Pressure", "Power Volume Method", options=["Pressure", "Polarity"], group=GRP_INT)
+string powerTieBreak = input.string("Carry last direction", "Power Tie Break", options=["Carry last direction", "Use prev intrabar close", "Ignore dojis"], group=GRP_INT)
+float powerNeutralBandPct = input.float(10.0, "Power Neutral Band", step=1.0, group=GRP_INT)
+int powerFlipConfirmBars = input.int(0, "Power Confirm Bars (0=Auto)", minval=0, group=GRP_INT)
+int powerSmoothingLen = input.int(8, "Power Smoothing", minval=1, group=GRP_INT)
+string powerSmoothingType = input.string("EMA", "Smoothing Type", options=["EMA", "SMA"], group=GRP_INT)
+int powerMinIntrabars = input.int(4, "Min Intrabars", minval=1, group=GRP_INT)
 
 // === DERIVED VARIABLES (Backward compatibility) ===
 // These maintain compatibility with the rest of the code
