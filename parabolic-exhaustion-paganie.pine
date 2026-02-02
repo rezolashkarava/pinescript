@@ -198,28 +198,30 @@ int maxWaitBarsInput = input.int(20, "Max Wait for Confirmation", minval=5, maxv
      tooltip="Maximum bars to wait for break/retest confirmation before setup expires. Default: 20")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// INTERNAL PARAMETERS (Not exposed to UI)
+// INTERNAL TUNING (Exposed for Power Users)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+string GROUP_INT = "🛠️ Internal Tuning"
+
 // ROC (Rate of Change) parameters
-int rocPeriodInput = 8
-float rocExtremeInput = 80.0
-int rocLookbackInput = 120
-bool requireRocExtreme = false
+int rocPeriodInput = input.int(8, "ROC Period", minval=1, group=GROUP_INT, tooltip="Period for Rate of Change calculation.")
+float rocExtremeInput = input.float(80.0, "ROC Extreme %", minval=50.0, maxval=99.9, group=GROUP_INT, tooltip="Percentile threshold for extreme momentum.")
+int rocLookbackInput = input.int(120, "ROC Percentile Lookback", minval=50, group=GROUP_INT, tooltip="Lookback window for calculating ROC percentile.")
+bool requireRocExtreme = input.bool(false, "Require ROC Extreme", group=GROUP_INT, tooltip="If true, signal only fires if ROC is also at an extreme.")
 
 // Volume parameters  
-int volPeriodInput = 20
+int volPeriodInput = input.int(20, "Volume MA Period", minval=5, group=GROUP_INT)
 
 // Tolerance parameters
-float extremeTolAtrInput = 0.6
-float retestTolAtrInput = 0.25
+float extremeTolAtrInput = input.float(0.6, "Extreme Tolerance (ATR)", step=0.1, group=GROUP_INT, tooltip="Distance from High/Low to be considered 'At Extreme'.")
+float retestTolAtrInput = input.float(0.25, "Retest Tolerance (ATR)", step=0.05, group=GROUP_INT, tooltip="Allowed deviation for retest entries.")
 
 // Structure parameters
-bool requireNoNewExtreme = true
-int pivotLeft = 3
-int pivotRight = 3
-bool bosUsePivots = true
-float maxBosLevelDistAtrInput = 6.0
+bool requireNoNewExtreme = input.bool(true, "Structure Integrity", group=GROUP_INT, tooltip="If true, pattern is invalid if price makes a new extreme before confirmation.")
+int pivotLeft = input.int(3, "Pivot Left Bars", minval=1, group=GROUP_INT)
+int pivotRight = input.int(3, "Pivot Right Bars", minval=1, group=GROUP_INT)
+bool bosUsePivots = input.bool(true, "Use Swing Points for BOS", group=GROUP_INT, tooltip="Use Pivot Points for Break of Structure levels (more precise) instead of just candle highs/lows.")
+float maxBosLevelDistAtrInput = input.float(6.0, "Max BOS Distance (ATR)", step=0.5, group=GROUP_INT, tooltip="Max distance to look back for a relevant swing point.")
 
 // Adaptive regime timeframe - always use a higher TF for trend context
 string regimeTf = 
@@ -232,7 +234,7 @@ string regimeTf =
      "M"                            // Weekly+ uses Monthly
 
 // Regime filter parameters
-int regimeEmaLen = 200
+int regimeEmaLen = input.int(200, "Regime EMA Length", group=GROUP_INT)
 int regimeSlopeLookback = 20
 int regimeAtrLen = 14
 float maxRegimeSlopeAtr = 1.0
