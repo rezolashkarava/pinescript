@@ -105,60 +105,62 @@ alertAccepted = input.bool(true, "Breakout Accepted", group=GRP_ALERTS, tooltip=
 alertRetest = input.bool(true, "Retest Held", group=GRP_ALERTS, tooltip="Alert when price successfully retests broken level.")
 alertFailed = input.bool(true, "Failed/Sweep", group=GRP_ALERTS, tooltip="Alert when breakout fails or level is swept.")
 
-// === ADVANCED (Hidden defaults - for power users) ===
-// These use optimized defaults and are hidden to reduce confusion
-// Touch validation
-int touchLookback = 100
-float touchTolAtr = 0.15
-int minTouchesRequired = 2
-int touchSeparationBars = 3
-bool fastMode = true  // Always use fast mode for performance
+// === ADVANCED SETTINGS (Exposed) ===
+string GRP_ADV = "🛠️ Advanced Tuning"
+touchLookback = input.int(100, "Touch Lookback", minval=10, group=GRP_ADV, tooltip="Bars to look back for level touches.")
+touchTolAtr = input.float(0.15, "Touch Tolerance (ATR)", step=0.05, group=GRP_ADV, tooltip="Vertical distance to count as a 'touch'.")
+minTouchesRequired = input.int(2, "Min Touches Required", minval=1, group=GRP_ADV, tooltip="Minimum touches to validate a Psych level.")
+fastMode = input.bool(true, "Fast Estimation Mode", group=GRP_ADV, tooltip="Uses optimized logic for touches. Disable for pixel-perfect precision (slower).")
 
-// Session times (UTC) - using ICT standard killzones
-int londonStart = 2, int londonEnd = 5
-int nyStart = 8, int nyEnd = 11
-int asiaStart = 23, int asiaEnd = 2
-bool useMacroTimes = true
+// Session Times (New York Time)
+string GRP_TIME = "🕒 Session Times (NY)"
+londonStart = input.int(2, "London Start (NY)", minval=0, maxval=23, group=GRP_TIME)
+londonEnd = input.int(5, "London End (NY)", minval=0, maxval=23, group=GRP_TIME)
+nyStart = input.int(7, "NY Start (NY)", minval=0, maxval=23, group=GRP_TIME)
+nyEnd = input.int(10, "NY End (NY)", minval=0, maxval=23, group=GRP_TIME)
+asiaStart = input.int(20, "Asia Start (NY)", minval=0, maxval=23, group=GRP_TIME)
+asiaEnd = input.int(0, "Asia End (NY)", minval=0, maxval=23, group=GRP_TIME)
+useMacroTimes = input.bool(true, "Boost Macro Times", group=GRP_TIME, tooltip="Boost score at :00, :30, :50 minute marks.")
 
-// Zone settings
-int zoneLookback = 50
+// Internal thresholds (still optimized defaults, but exposed if needed)
+nearLevelAtr = 1.5
+closeBufferAtr = 0.05
+minTrAtr = 1.25
+minCloseLoc = 0.75
 
-// HTF Bias
-int htfEmaLen = 21
-
-// Trigger thresholds
-float nearLevelAtr = 1.5
-float closeBufferAtr = 0.05
-float minTrAtr = 1.25
-float minCloseLoc = 0.75
-
-// Confirmation
-int acceptBarsRequired = 2
-int acceptMaxBars = 5
-float retestTolAtr = 0.3
-int retestMaxBars = 12
-float retestMaxWickAtr = 0.5
+// Confirmation Settings
+acceptBarsRequired = 2
+acceptMaxBars = input.int(5, "Max Bars to Accept", group=GRP_ADV)
+retestTolAtr = input.float(0.3, "Retest Tolerance (ATR)", group=GRP_ADV)
+retestMaxBars = input.int(12, "Max Bars for Retest", group=GRP_ADV)
+retestMaxWickAtr = input.float(0.5, "Max Wick Sweep (ATR)", group=GRP_ADV)
 
 // Failure detection
-float sweepMinExcAtr = 0.25
-int failWindowBars = 3
+sweepMinExcAtr = 0.25
+failWindowBars = 3
 
 // Regime filter
-float activeTrPct = 40.0
-float activeDvolPct = 40.0
-string activeLogicMode = "OR"
+activeTrPct = 40.0
+activeDvolPct = 40.0
+activeLogicMode = "OR"
 
-// Removed features (caused confusion, minimal accuracy benefit)
-bool useCompression = false
-int bbwLen = 20
-float bbwStdev = 2.0
-float bbwLowPct = 25.0
-float atrLowPct = 35.0
-bool usePsychLevels = false
-float psychLevelInterval = 100.0
-int pivotLeftBars = 3
-string biasMode = "Filter"
-string settingsMode = "Auto"
+// HTF Bias & Zone Settings
+htfEmaLen = input.int(21, "HTF EMA Length", group=GRP_ADV, tooltip="Length of EMA for Trend Filter.")
+zoneLookback = input.int(50, "Zone Lookback", minval=10, group=GRP_ADV, tooltip="Lookback for Swing High/Low detection.")
+
+
+// Legacy/Unused (kept for variable compatibility or manual override)
+useCompression = false
+bbwLen = 20
+bbwStdev = 2.0
+bbwLowPct = 25.0
+atrLowPct = 35.0
+touchSeparationBars = 3
+biasMode = "Filter"
+settingsMode = "Auto"
+usePsychLevels = false // Can be re-enabled if desired
+psychLevelInterval = 100.0
+pivotLeftBars = 3
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // COLORS
@@ -183,6 +185,8 @@ bool isStrict = presetMode == "Institutional (Strict)"
 bool isAggressive = presetMode == "Aggressive"
 
 // Trading style presets (auto-optimized)
+// Note: These override the "Advanced" tuning inputs ONLY for specific logic. 
+// We will use the Advanced Inputs for the core lookbacks to give user control.
 int cooldownBars = isStrict ? 30 : isAggressive ? 10 : 20
 string entryMode = isStrict ? "Retest" : isAggressive ? "Acceptance" : entryModeInput
 float effCloseBuffer = isStrict ? 0.08 : isAggressive ? 0.03 : 0.05
@@ -193,9 +197,9 @@ int effAcceptMax = isStrict ? 4 : isAggressive ? 8 : 5
 float effSweepExc = isStrict ? 0.35 : isAggressive ? 0.15 : 0.25
 int effFailWindow = isStrict ? 2 : isAggressive ? 5 : 3
 
-// Auto-scale lookbacks for timeframe
-int effTouchLookback = is_scalping ? 60 : is_intraday ? 80 : 100
-int effZoneLookback = is_scalping ? 30 : is_intraday ? 40 : 50
+// Use user inputs for lookbacks (User Control > Auto-magic)
+int effTouchLookback = touchLookback
+int effZoneLookback = zoneLookback
 
 bool wantAcceptSignal = entryMode == "Acceptance" or entryMode == "Both"
 bool wantRetestSignal = entryMode == "Retest" or entryMode == "Both"
@@ -237,18 +241,18 @@ bool volOk = not na(dvolPctRank) and dvolPctRank >= activeDvolPct
 bool activeMarket = not useRegimeFilter or (activeLogicMode == "AND" ? (trOk and volOk) : (trOk or volOk))
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// SESSION DETECTION (Fixed wraparound)
+// SESSION DETECTION (New York Time)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-int hourUtc = hour(time, "UTC")
-int minuteUtc = minute(time, "UTC")
+int hourNy = hour(time, "America/New_York")
+int minuteNy = minute(time, "America/New_York")
 
-bool inLondonKZ = inSession(londonStart, londonEnd, hourUtc)
-bool inNyKZ = inSession(nyStart, nyEnd, hourUtc)
-bool inAsiaKZ = inSession(asiaStart, asiaEnd, hourUtc)
+bool inLondonKZ = inSession(londonStart, londonEnd, hourNy)
+bool inNyKZ = inSession(nyStart, nyEnd, hourNy)
+bool inAsiaKZ = inSession(asiaStart, asiaEnd, hourNy)
 bool inOverlapKZ = inLondonKZ and inNyKZ
-bool inAnyKillzone = inLondonKZ or inNyKZ
+bool inAnyKillzone = inLondonKZ or inNyKZ or inAsiaKZ
 
-bool isMacroTime = useMacroTimes and (minuteUtc == 0 or minuteUtc == 30 or minuteUtc == 50)
+bool isMacroTime = useMacroTimes and (minuteNy == 0 or minuteNy == 30 or minuteNy == 50)
 
 // Session score
 int sessionScore = 0
@@ -258,12 +262,12 @@ if useSessionFilter
         sessionScore := math.min(sessionScore + 2, 10)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// KEY LEVELS (Optimized UTC tracking)
+// KEY LEVELS (Midnight NY Alignment - True Day)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-int yUtc = year(time, "UTC")
-int mUtc = month(time, "UTC")
-int dUtc = dayofmonth(time, "UTC")
-int wUtc = weekofyear(time, "UTC")
+int yUtc = year(time, "America/New_York")
+int mUtc = month(time, "America/New_York")
+int dUtc = dayofmonth(time, "America/New_York")
+int wUtc = weekofyear(time, "America/New_York")
 
 int dayId = yUtc * 10000 + mUtc * 100 + dUtc
 int weekId = yUtc * 100 + wUtc
@@ -341,18 +345,21 @@ if showVwap
         vwapV += volume
 float vwapDaily = showVwap and not na(vwapV) and vwapV > 0 ? vwapPv / vwapV : na
 
-// Opening Range
+// Opening Range (09:30 - 10:00 NY)
 var float orHigh = na, var float orLow = na, var bool orComplete = false
 if useOpeningRange
     if newDay
         orHigh := na
         orLow := na
         orComplete := false
-    bool inOrWindow = hourUtc == 13 or (hourUtc == 14 and minuteUtc < 30)
+    
+    // 09:30 to 10:00 NY Time
+    bool inOrWindow = (hourNy == 9 and minuteNy >= 30)
+    
     if inOrWindow and not orComplete
         orHigh := na(orHigh) ? high : math.max(orHigh, high)
         orLow := na(orLow) ? low : math.min(orLow, low)
-    else if not inOrWindow and not na(orHigh) and hourUtc >= 14
+    else if not inOrWindow and not na(orHigh) and (hourNy > 9 or (hourNy == 9 and minuteNy >= 30))
         orComplete := true
 
 // H1 Pivots (single request)
