@@ -1,5 +1,5 @@
 //@version=6
-indicator("Pagani Breakout Quality Engine Ultra [BQE]", overlay=true, max_labels_count=200, max_lines_count=100, max_boxes_count=50)
+indicator("Breakout Quality Engine Ultra [Paganie]", overlay=true, max_labels_count=200, max_lines_count=100, max_boxes_count=50)
 
 // ============================================================================
 // BREAKOUT QUALITY ENGINE ULTRA V2.2 - SIMPLIFIED & INTUITIVE
@@ -91,7 +91,7 @@ visualMode = input.string("Minimal", "Visual Mode", options=["Minimal", "Standar
      tooltip="MINIMAL: Only active levels.\nSTANDARD: Show key level lines.\nFULL: All levels, zones, and OTE.")
 showLabels = input.bool(true, "Show Signal Labels", group=GRP_VIS)
 showScoreInLabel = input.bool(true, "Show Quality Score", group=GRP_VIS, tooltip="Display numeric quality score (0-100) in signal labels.")
-showDashboard = input.bool(true, "Show Dashboard", group=GRP_VIS)
+showDashboard = input.bool(false, "Show Dashboard", group=GRP_VIS)
 dashboardLocation = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GRP_VIS)
 dashboardSize = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=GRP_VIS, tooltip="Size of dashboard text and cells.")
 dashboardTransparency = input.int(90, "Dashboard Transparency", minval=0, maxval=90, step=5, group=GRP_VIS, tooltip="Background transparency (0=solid, 90=nearly invisible).")

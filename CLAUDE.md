@@ -24,9 +24,11 @@ This is a collection of TradingView Pine Script indicators focused on ICT (Inner
 ## Key Indicators
 
 - **ICT Order Block Pro** (`ict-order-block-pro-paganie.pine`) - The flagship indicator. Institutional order block detection with liquidity sweeps, volume profile enhancement, and Power Row for real-time buy/sell pressure. Most complex indicator (~114KB).
-- **Pagani Breakout Quality Engine** (`pagani-breakout-quality-engine.pine`) - Breakout scoring system using compression detection, key level analysis (PDH/PDL, PWH/PWL, H1 pivots), and acceptance/retest confirmation.
+- **Pagani Breakout Quality Engine** (`pagani-breakout-quality-engine.pine`) - Breakout scoring system using key level analysis (PDH/PDL, PWH/PWL, H1 pivots), and acceptance/retest confirmation.
 - **BTC Volume Analysis** (`btc-volume-analysis-paganie.pine`) - Multi-timeframe volume sentiment with intrabar buy/sell pressure analysis.
-- **Parabolic Exhaustion** indicators - Multiple variants for detecting exhaustion patterns and potential reversals.
+- **Pagani Dashboard Hub** (`pagani-dashboard-hub.pine`) - Unified dashboard consolidating data from BTC Volume Analysis, BQE, and ICT Order Block Pro. Use this to declutter by disabling individual indicator dashboards.
+- **Crypto S&D Zones** (`crypto-sd-zones.pine`) - Supply/demand zone detection with crypto-specific filters (BTC.D, Open Interest, weekend penalty).
+- **Parabolic Exhaustion** (`parabolic-exhaustion-paganie.pine`, `parabolic-exhaustion-reversal-pro.pine`) - Exhaustion pattern detection for potential reversals. The "Reversal Pro" variant has additional confirmation logic.
 - **Regime-Aware Institutional VWAP** (`regime-aware-institutional-vwap.pine`) - VWAP with market regime awareness.
 
 ## Pine Script Development Notes
@@ -55,10 +57,34 @@ group = "Liquidity Sweeps"
 - Pressure method: `(close-low)/(high-low)` ratio for proportional buy/sell assignment
 - Polarity method: Binary classification based on candle color
 
+**Timeframe Auto-Detection**: Standard pattern across indicators:
+```pinescript
+tf_in_minutes = timeframe.in_seconds() / 60
+is_scalping = tf_in_minutes <= 15
+is_swing = tf_in_minutes > 15 and tf_in_minutes <= 240
+is_position = tf_in_minutes > 240
+```
+
+**Direction Constants**: Avoid string comparisons with integer constants:
+```pinescript
+int DIR_BULL = 1
+int DIR_BEAR = -1
+```
+
+**User-Defined Types**: Structured data uses `type` keyword (Pine Script v5+):
+```pinescript
+type Zone
+    float   top
+    float   bottom
+    int     start_bar
+```
+
 ### Performance Considerations
 - VP (Volume Profile) analysis uses nested loops - auto-scale lookback on lower timeframes
 - Use `renderMode` options (Gradient/Simple fill/Borders only) to reduce object count
 - Conditional pre-computation for scalper mode to skip unused calculations
+- Consolidate `request.security()` calls where possible (e.g., fetch OHLCV in one call via tuple return)
+- Use `request.security_lower_tf()` for intrabar analysis instead of multiple single-bar requests
 
 ## Documentation Files
 
