@@ -1,61 +1,23 @@
 //@version=6
-indicator("ICT Order Block Pro [Paganie] v3.7.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("ICT Order Block Pro [Paganie] v3.9.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
-// ICT ORDER BLOCK PRO V3.7.0 - INSTITUTIONAL SMART MONEY CONCEPTS
+// ICT ORDER BLOCK PRO V3.9.0 - INSTITUTIONAL SMART MONEY CONCEPTS
 // Professional-grade order block detection with ICT/SMC methodology
 //
-// V3.7.0 - Crypto-Optimized Defaults + Performance:
-// • Crypto Filters module enabled by default (BTC.D, OI, weekend penalty)
-// • Liquidity event alerts ON by default
-// • Liquidity runs (continuation) displayed by default
-// • Volume scoring boosted (2.0x multiplier) for crypto volatility
-// • Sweep lookback extended to 25 bars for manipulation patterns
-// • VP lookback increased to 120 bars for better volume analysis
-// • Power neutral band widened to 12% for crypto volatility
-// • Max liquidity levels increased to 8 for more pool tracking
-// • Performance: Consolidated security calls (5→1), single-pass block processing
-//
-// V3.6.0 - Locked Settings for Optimal Performance:
-// • Settings reduced to ~20 essential controls
-// • All algorithm parameters locked to optimal values
-// • Users can only adjust: Mode, Modules, Visuals, Alerts, Colors
-// • Detection, Zone, Strength, Liquidity params auto-optimized by timeframe
-// • Power Row always uses Auto mode with Pressure method
-// • Prevents users from accidentally degrading signal quality
-//
-// V3.5.0 - Enhanced Volume Classification:
-// • NEW: Buying/Selling Pressure method for Power Row (more accurate than Polarity)
-//   - Uses (close-low)/(high-low) ratio to assign proportional buy/sell volume
-//   - Provides nuanced readings instead of binary all-or-nothing classification
-// • Added powerVolumeMethod setting to choose between Pressure and Polarity
-// • Pressure method is now the default for improved accuracy
-//
-// V3.4.1 - Array Bounds & Edge Case Fixes:
-// • Fixed trimLevels function index out-of-bounds when removing liquidity levels
-// • Added array size validation in calcPower for intrabar data consistency
-// • Added pivotIdx upper bound check in checkMSB function
-// • Added defensive guards against division by zero in gradient rendering
-// • Enhanced updateBlock with segment bounds protection
-//
-// V3.4.0 - Production Default UX + Stability Finalization:
-// • Settings Mode: Auto (default) optimizes all settings per timeframe
-// • Signal Timing: Confirmed mode now fully latches Power row (no intrabar flicker)
-// • Liquidity Module: Opt-in by default (enableLiquidity master toggle OFF)
-// • Alerts-only mode: Liquidity alerts work even when all drawings are disabled
-// • Anti-spam edge-triggered alerts for Touch and Liquidity Proximity
-// • Touch alerts respect touchMode setting (wick vs close)
-// • Clearer run alerts: "BSL Run (Upside)" / "SSL Run (Downside)"
-// • Volume Profile Enhancement: ON by default
-// • Dashboard location: Selectable corners with proper table recreation
+// V3.9.0 - Uniform OB Appearance:
+// • Border lines use bar_index and extend every tick for real-time updates
+// • All OB visuals (boxes, lines, linefill, labels) extend uniformly
+// • Default render mode: Simple fill for clean uniform appearance
 //
 // Features:
 // • Two detection methods: Institutional (stricter) & Scalper (faster)
 // • Multi-TF Power Row with real-time BUY/SELL pressure
 // • ICT Liquidity Sweep Detection: BSL/SSL levels, sweep/run detection
-// • Volume Profile integration for Elite★ blocks (Premium)
+// • Volume Profile integration for Elite★ blocks
 // • Quality ratings: ★ Elite, ◆ Strong, ◇ Mid, ○ Weak
 // • Proximity & rejection alerts with anti-spam protection
+// • Crypto filters: BTC.D, Open Interest, weekend penalty
 // • Auto-adapts settings based on timeframe
 // ============================================================================
 
@@ -113,7 +75,6 @@ int DIR_BEAR = -1
 string GRP_MODE = "⚙️ Mode"
 settingsMode = input.string("Auto", "Settings Mode", options=["Auto", "Manual"], group=GRP_MODE,
      tooltip="AUTO: Optimizes all settings based on timeframe.\nMANUAL: Full control over preset and advanced settings.")
-// NEW: Adaptive Features
 useAdaptiveScan = input.bool(true, "Adaptive Scan Window", group=GRP_MODE, tooltip="Automatically extends scan window in low volatility to find OBs.")
 
 manualPreset = input.string("Auto", "Preset Override", options=["Auto", "Scalping", "Swing", "Position"], group=GRP_MODE,
@@ -146,8 +107,8 @@ dashboardSize = input.string("Small", "Dashboard Size", options=["Tiny", "Small"
 dashboardTransparency = input.int(90, "Dashboard Transparency", minval=0, maxval=90, step=5, group=GRP_VIS)
 showOnlyStrongElite = input.bool(false, "Show Only Strong/Elite OBs", group=GRP_VIS,
      tooltip="Filter out Weak and Mid strength order blocks.")
-renderMode = input.string("Gradient", "Render Mode", options=["Gradient", "Simple fill", "Borders only"], group=GRP_VIS,
-     tooltip="Gradient = full visuals. Simple/Borders = fewer objects.")
+renderMode = input.string("Simple fill", "Render Mode", options=["Simple fill", "Gradient", "Borders only"], group=GRP_VIS,
+     tooltip="Simple fill = uniform color (recommended). Gradient = layered effect. Borders only = minimal.")
 showLabels = input.bool(true, "Show Labels", group=GRP_VIS, tooltip="Show strength and volume labels on OBs.")
 showCornerAccents = input.bool(true, "Corner Accents", group=GRP_VIS, tooltip="Corner markers on Strong/Elite blocks.")
 
@@ -307,10 +268,9 @@ if effectivePreset == "Scalping"
     actualMSB := true
     maxBlocks := 8
     mitigationMethod := mitigationMode == "Auto" ? "Wick" : mitigationMode
-    // Performance guardrails for scalping (Auto mode)
+    // PERFORMANCE GUARDRAILS for scalping (Auto mode) - cap segments
     if settingsMode == "Auto"
-        effectiveGridSegments := math.min(gridSegments, 8)  // Cap at 8 for speed
-        effectiveRenderMode := tf_in_minutes <= 3 ? "Simple fill" : renderMode  // Force simple on very low TF
+        effectiveGridSegments := math.min(gridSegments, 5)  // Cap at 5 for speed
 else if effectivePreset == "Swing"
     // Swing: Balanced approach
     actualLookback := 5
@@ -321,7 +281,7 @@ else if effectivePreset == "Swing"
     maxBlocks := 6
     mitigationMethod := mitigationMode == "Auto" ? "Close" : mitigationMode
     if settingsMode == "Auto"
-        effectiveGridSegments := math.min(gridSegments, 12)
+        effectiveGridSegments := math.min(gridSegments, 8)  // Cap at 8 for balance
 else
     // Position: Quality focus
     actualLookback := 7
@@ -799,6 +759,14 @@ bool oi_bearish = i_cryptoModule and not na(oi_change) and oi_change > 0 and clo
 
 // --- Weekend Detection (only when crypto module enabled) ---
 bool is_weekend = i_cryptoModule and i_useWeekend ? (dayofweek == dayofweek.saturday or dayofweek == dayofweek.sunday) : false
+
+// --- HTF Trend Data (for Dashboard) ---
+// PERFORMANCE: Security calls MUST be at global scope, not inside conditionals
+// Gate by showDashboard and timeframe to skip unnecessary calls
+string _htfTf = tf_in_minutes < 60 ? "240" : tf_in_minutes < 240 ? "D" : ""
+bool _needHtfData = showDashboard and tf_in_minutes < 240
+float htfClose = _needHtfData ? request.security(syminfo.tickerid, _htfTf, close, ignore_invalid_symbol=true) : na
+float htfSma50 = _needHtfData ? request.security(syminfo.tickerid, _htfTf, ta.sma(close, 50), ignore_invalid_symbol=true) : na
 
 // Premium/Discount Zone Calculation (ICT concept)
 // Auto-scale lookback based on timeframe for optimal zone responsiveness
@@ -1389,7 +1357,7 @@ checkScalperCondition(int tuning) =>
 // === VISUAL GENERATION ===
 createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) =>
     boxArray = array.new<box>()
-    
+
     // Check render mode (uses effective settings)
     if rMode == "Gradient"
         // Create elegant gradient layers with edge-to-center fading
@@ -1406,7 +1374,7 @@ createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) 
 
         // Use bar_index instead of time for boxes to avoid xloc issues
         int leftBarIdx = leftBar
-        int rightBarIdx = bar_index
+        int rightBarIdx = bar_index + 1  // +1 to extend through forming candle
 
         // Create multiple gradient layers for smooth visual
         for i = 0 to lastSegment
@@ -1429,6 +1397,7 @@ createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) 
             box newBox = box.new(leftBarIdx, topGrid, rightBarIdx, botGrid,
                  border_width=0, bgcolor=layerCol)
             array.push(boxArray, newBox)
+
     else if rMode == "Simple fill"
         // Simple mode: single fill box (much fewer objects)
         color baseCol = block.direction == DIR_BULL ? bullBorder : bearBorder
@@ -1437,30 +1406,31 @@ createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) 
         int simpleAlpha = isStrong ? fillAlpha : 90
         color fillCol = color.new(baseCol, simpleAlpha)
         int leftBarIdx = leftBar
-        int rightBarIdx = bar_index
+        int rightBarIdx = bar_index + 1  // +1 to extend through forming candle
 
         box fillBox = box.new(leftBarIdx, block.top, rightBarIdx, block.bot,
              border_width=0, bgcolor=fillCol)
         array.push(boxArray, fillBox)
     // else "Borders only" - no fill boxes created
-    
+
     boxArray
 
-createBorder(OrderBlock block, int leftTime, string rMode) =>
+createBorder(OrderBlock block, int leftBar, string rMode) =>
     color baseCol = block.direction == DIR_BULL ? bullBorder : bearBorder
-    
-    // Top line (full length, subtle)
+
+    // Top line (full length, subtle) - use bar_index for real-time extension
     color mainLineCol = color.new(baseCol, 30)
-    line topLine = line.new(x1=leftTime, y1=block.top, x2=time, y2=block.top, 
-         xloc=xloc.bar_time, color=mainLineCol, width=1, style=line.style_dotted)
-    
+    int rightBarIdx = bar_index + 1  // +1 to extend through forming candle
+    line topLine = line.new(x1=leftBar, y1=block.top, x2=rightBarIdx, y2=block.top,
+         xloc=xloc.bar_index, color=mainLineCol, width=1, style=line.style_dotted)
+
     // Bottom line (full length, subtle)
-    line botLine = line.new(x1=leftTime, y1=block.bot, x2=time, y2=block.bot, 
-         xloc=xloc.bar_time, color=mainLineCol, width=1, style=line.style_dotted)
-    
+    line botLine = line.new(x1=leftBar, y1=block.bot, x2=rightBarIdx, y2=block.bot,
+         xloc=xloc.bar_index, color=mainLineCol, width=1, style=line.style_dotted)
+
     // Glow effect for strong blocks (multiple transparent fills) - only if not "Borders only"
     linefill fill = na
-    
+
     if rMode != "Borders only"
         if block.strength == "Strong" or block.strength == "Elite"
             // Add glow with gradient fill
@@ -1470,7 +1440,7 @@ createBorder(OrderBlock block, int leftTime, string rMode) =>
             // Much lighter fill for Weak/Mid blocks (alpha 90 for subtlety)
             color fillCol = color.new(baseCol, 90)
             fill := linefill.new(topLine, botLine, fillCol)
-    
+
     [topLine, botLine, fill]
 
 createCornerAccents(OrderBlock block, int leftBar, string rMode) =>
@@ -1562,14 +1532,15 @@ createSweepLabel(float level, float wickExtent, int sweepBar, bool isBullish, st
 createVolumeLabel(OrderBlock block) =>
     // Create elegant side panel label
     float labelY = block.top - (block.top - block.bot) * 0.25  // Upper quarter position
-    
+
     // Elegant label styling with dark background and colored accent
     color bgCol = color.new(#1a1a1a, 15)  // Dark semi-transparent background
     color textCol = block.direction == DIR_BULL ? bullBorder : bearBorder
-    
+
     // Create elegant label with dark bg and vibrant text
-    label lbl = label.new(time, labelY, buildLabelText(block), xloc.bar_time, yloc.price, bgCol, label.style_label_left, textCol, size.small)
-    
+    // Use bar_index + 1 so label extends through forming candle (matches box behavior)
+    label lbl = label.new(bar_index + 1, labelY, buildLabelText(block), xloc.bar_index, yloc.price, bgCol, label.style_label_left, textCol, size.small)
+
     lbl
 
 deleteBlock(OrderBlock block) =>
@@ -1581,12 +1552,12 @@ deleteBlock(OrderBlock block) =>
         linefill.delete(block.bgFill)
     if not na(block.volLabel)
         label.delete(block.volLabel)
-    
+
     int volBoxCount = array.size(block.volumeBoxes)
     if volBoxCount > 0
         for i = 0 to volBoxCount - 1
             box.delete(array.get(block.volumeBoxes, i))
-    
+
     int cornerCount = array.size(block.cornerBoxes)
     if cornerCount > 0
         for i = 0 to cornerCount - 1
@@ -1611,24 +1582,28 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
             OrderBlock block = array.get(blocks, i)
 
             // --- VISUAL UPDATE (from updateBlock) ---
+            // Extend boxes to bar_index + 1 so they cover the forming candle
+            // This runs every tick to ensure real-time extension
+            int extendToBar = bar_index + 1  // +1 to extend through forming candle
+
+            // Extend all volume boxes to current bar + 1
+            int volBoxCount = array.size(block.volumeBoxes)
+            if volBoxCount > 0
+                int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
+                for j = 0 to maxIdx
+                    box.set_right(array.get(block.volumeBoxes, j), extendToBar)
+
+            // Update label position every tick (uses bar_index now, not time)
+            if not na(block.volLabel)
+                label.set_x(block.volLabel, extendToBar)
+
+            // Update border lines every tick (uses bar_index now for uniform extension)
+            if not na(block.topLine)
+                line.set_x2(block.topLine, extendToBar)
+            if not na(block.botLine)
+                line.set_x2(block.botLine, extendToBar)
+
             if isNewBar
-                // Update gradient boxes - extend to current bar
-                int volBoxCount = array.size(block.volumeBoxes)
-                if volBoxCount > 0
-                    int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
-                    for j = 0 to maxIdx
-                        box.set_right(array.get(block.volumeBoxes, j), bar_index)
-
-                // Update border lines
-                if not na(block.topLine)
-                    line.set_x2(block.topLine, currentTime)
-                if not na(block.botLine)
-                    line.set_x2(block.botLine, currentTime)
-
-                // Update label position
-                if not na(block.volLabel)
-                    label.set_x(block.volLabel, currentTime)
-
                 block.lastUpdateBar := bar_index
 
             if not block.mitigated
@@ -1708,29 +1683,29 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
 
 // Keep legacy updateBlock for any direct calls (used by updateBlocks wrapper if needed)
 updateBlock(OrderBlock block, int currentTime, int segments) =>
-    // Only extend visuals on new bars (not every tick)
+    // Extend boxes and labels every tick for real-time extension
+    int extendToBar = bar_index + 1  // +1 to extend through forming candle
+
+    // Extend all volume boxes to current bar + 1
+    int volBoxCount = array.size(block.volumeBoxes)
+    if volBoxCount > 0
+        int safeSegments = math.max(segments, 1)
+        int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
+        for i = 0 to maxIdx
+            box.set_right(array.get(block.volumeBoxes, i), extendToBar)
+
+    // Update label position every tick (uses bar_index now)
+    if not na(block.volLabel)
+        label.set_x(block.volLabel, extendToBar)
+
+    // Update border lines every tick (uses bar_index for uniform extension)
+    if not na(block.topLine)
+        line.set_x2(block.topLine, extendToBar)
+    if not na(block.botLine)
+        line.set_x2(block.botLine, extendToBar)
+
     bool isNewBar = na(block.lastUpdateBar) or bar_index > block.lastUpdateBar
-
     if isNewBar
-        // Update gradient boxes - extend to current bar (boxes use bar_index)
-        int volBoxCount = array.size(block.volumeBoxes)
-        if volBoxCount > 0
-            // Ensure segments is at least 1 to prevent negative index
-            int safeSegments = math.max(segments, 1)
-            int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
-            for i = 0 to maxIdx
-                box.set_right(array.get(block.volumeBoxes, i), bar_index)
-
-        // Update border lines (lines use time)
-        if not na(block.topLine)
-            line.set_x2(block.topLine, currentTime)
-        if not na(block.botLine)
-            line.set_x2(block.botLine, currentTime)
-
-        // Update label position (labels use time)
-        if not na(block.volLabel)
-            label.set_x(block.volLabel, currentTime)
-
         block.lastUpdateBar := bar_index
 
     // Only rebuild label text on state change (not every bar)
@@ -1838,15 +1813,15 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
 
             // Create new block
             OrderBlock newBlock = OrderBlock.new(
-                 array.new<box>(), na, na, na, na, array.new<box>(),
+                 array.new<box>(), na, na, na, na, array.new<box>(),  // volumeBoxes, lines, fill, label, corners
                  top, bot, direction,
                  vol, relVol, strength, false, 0, false, false,
                  na, 0, false, false, fmtVol)  // State tracking + cached formattedVol
-            
+
             box[] volBoxes = createVolumeGradient(newBlock, leftBar, effectiveGridSegments, effectiveRenderMode)
             newBlock.volumeBoxes := volBoxes
             
-            [topLine, botLine, fill] = createBorder(newBlock, leftTime, effectiveRenderMode)
+            [topLine, botLine, fill] = createBorder(newBlock, leftBar, effectiveRenderMode)
             newBlock.topLine := topLine
             newBlock.botLine := botLine
             newBlock.bgFill := fill
@@ -2288,20 +2263,12 @@ if showDashboard and barstate.islast
     string modeTag = settingsMode == "Auto" ? "MODE:AUTO" : "MODE:MANUAL"
     string confirmTag = signalTiming == "Confirmed (bar close)" ? " | CONFIRMED" : ""
     
-    // HTF Trend in Header
-    // Determine HTF (simulated for efficiency or real request if needed)
-    // For simplicity and performance, we'll use a 200 SMA relative comparison as "Trend"
-    // To make it truly HTF, we'd need another security call, but we can infer from current chart context + 200 SMA
-    bool uptrend = close > sma50  // Using SMA50 from global scope as localized trend
-    // A robust HTF would check a higher timeframe. Let's add a lightweight one.
+    // HTF Trend in Header (uses cached security data from global scope)
+    bool uptrend = close > sma50
     string htfStr = ""
-    // Only check HTF if not on high timeframe already
-    if tf_in_minutes < 240
-        string htfTf = tf_in_minutes < 60 ? "240" : "D"
-        float htfClose = request.security(syminfo.tickerid, htfTf, close, ignore_invalid_symbol=true)
-        float htfSma = request.security(syminfo.tickerid, htfTf, ta.sma(close, 50), ignore_invalid_symbol=true)
-        if not na(htfClose) and not na(htfSma)
-            htfStr := " | LTF:" + (uptrend ? "▲" : "▼") + " HTF:" + (htfClose > htfSma ? "▲" : "▼")
+    // Use pre-fetched HTF data (security calls at global scope for performance)
+    if _needHtfData and not na(htfClose) and not na(htfSma50)
+        htfStr := " | LTF:" + (uptrend ? "▲" : "▼") + " HTF:" + (htfClose > htfSma50 ? "▲" : "▼")
     
     string headerText = presetDisplay + " | " + modeTag + confirmTag + htfStr
     table.cell(dashboard, 0, 0, headerText, text_color=color.white, text_size=dashHeaderSize)
@@ -2467,7 +2434,7 @@ alertcondition(alertTouch and bearTouchTrigger, "Price in Bear Zone", "❤️ Pr
 alertcondition(alertReject and bullReject, "Bull Zone Rejection", "🚀 Rejection from Bull OB on {{ticker}} {{interval}} - Potential LONG")
 alertcondition(alertReject and bearReject, "Bear Zone Rejection", "💥 Rejection from Bear OB on {{ticker}} {{interval}} - Potential SHORT")
 
-// Proximity Alerts (New - gives advance warning before price reaches zones)
+// Proximity Alerts - advance warning before price reaches zones
 alertcondition(proximityAlertEnabled and nearBullOB, "Approaching Bull OB", "⚠️ Price approaching BULLISH Order Block on {{ticker}} {{interval}} - Prepare LONG setup")
 alertcondition(proximityAlertEnabled and nearBearOB, "Approaching Bear OB", "⚠️ Price approaching BEARISH Order Block on {{ticker}} {{interval}} - Prepare SHORT setup")
 
