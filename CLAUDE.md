@@ -40,11 +40,20 @@ This is a collection of TradingView Pine Script indicators focused on ICT (Inner
 
 ### Common Patterns in This Codebase
 
-**Settings Organization**: Settings are grouped logically with emojis for visual hierarchy:
+**Settings Organization**: Settings are grouped with emoji prefixes and uppercase constants:
 ```pinescript
-group = "⚙️ Mode"
-group = "🔥 Premium Features"
-group = "Liquidity Sweeps"
+string GRP_MODE = "⚙️ Mode"
+string GRP_MOD = "📊 Modules"
+string GRP_VIS = "🎨 Visuals"
+string GRP_ALERT = "🔔 Alerts"
+string GRP_INT = "🛠️ Internal Tuning"
+```
+
+**Effective Settings Pattern**: Auto/Manual mode with derived effective values:
+```pinescript
+string tfBasedPreset = is_scalping ? "Scalping" : is_swing ? "Swing" : "Position"
+string effectivePreset = (settingsMode == "Manual" and manualPreset != "Auto") ? manualPreset : tfBasedPreset
+bool effectiveAutoMode = settingsMode == "Auto"
 ```
 
 **Signal Timing**: Most indicators support both realtime (intrabar) and confirmed (bar close) modes via `signalTiming` input.
@@ -79,12 +88,53 @@ type Zone
     int     start_bar
 ```
 
+**Helper Functions**: Common utilities across indicators:
+```pinescript
+round2(float x) => math.round(x * 100) / 100
+round1(float x) => math.round(x * 10) / 10
+safeDivide(float num, float denom) => na(num) or na(denom) or denom == 0 ? na : num / denom
+formatVolume(float vol) => vol >= 1000000 ? str.tostring(round2(vol/1000000)) + "M" : vol >= 1000 ? str.tostring(round2(vol/1000)) + "K" : str.tostring(math.round(vol))
+strengthSymbol(string s) => s == "Elite" ? "★" : s == "Strong" ? "◆" : s == "Mid" ? "◇" : "○"
+```
+
 ### Performance Considerations
 - VP (Volume Profile) analysis uses nested loops - auto-scale lookback on lower timeframes
 - Use `renderMode` options (Gradient/Simple fill/Borders only) to reduce object count
 - Conditional pre-computation for scalper mode to skip unused calculations
 - Consolidate `request.security()` calls where possible (e.g., fetch OHLCV in one call via tuple return)
 - Use `request.security_lower_tf()` for intrabar analysis instead of multiple single-bar requests
+- Use targeted `max_bars_back()` on individual series instead of global `indicator(max_bars_back=...)`:
+```pinescript
+max_bars_back(open, 600)
+max_bars_back(high, 600)
+max_bars_back(close, 600)
+max_bars_back(volume, 600)
+```
+
+### Alert Patterns
+**Edge-Triggered Alerts** (anti-spam): Use state variables to fire once per event:
+```pinescript
+var bool wasInZone = false
+bool isInZone = close >= zoneBottom and close <= zoneTop
+bool justEntered = isInZone and not wasInZone
+wasInZone := isInZone
+// justEntered only fires on transition, not while staying in zone
+```
+
+### File Header Convention
+Each indicator follows this version header pattern:
+```pinescript
+//@version=6
+indicator("Name [Paganie] vX.Y.Z", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// INDICATOR NAME VX.Y.Z - BRIEF DESCRIPTION
+// Longer description of purpose
+//
+// VX.Y.Z - Changelog Title:
+// • Bullet point changes
+// ============================================================================
+```
 
 ## Documentation Files
 
