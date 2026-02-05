@@ -353,7 +353,7 @@ if useVolumeProfile
 getPowerLtf() =>
     string ltf = "1"
     int chartSeconds = timeframe.in_seconds()
-    
+
     // Expanded mapping for all timeframes
     if tf_in_minutes <= 5
         ltf := "1"          // Chart ≤5m → 1-min intrabars
@@ -367,14 +367,14 @@ getPowerLtf() =>
         ltf := "60"         // Chart ≤1D → 1h intrabars
     else
         ltf := "240"        // Weekly+ → 4h intrabars
-    
+
     // Safety check: never request higher TF than chart
     // Convert ltf to seconds for comparison
     int ltfSeconds = ltf == "1" ? 60 : ltf == "5" ? 300 : ltf == "15" ? 900 : ltf == "60" ? 3600 : 14400
     if ltfSeconds >= chartSeconds
         // Fallback: use smallest valid LTF (1 min) or chart TF itself
         ltf := chartSeconds <= 60 ? timeframe.period : "1"
-    
+
     ltf
 
 // Auto-scale smoothing length based on chart TF
@@ -475,7 +475,7 @@ calcPower(string method, string tieBreakRule) =>
     int sizeClose = array.size(arrClose)
     int intrabarCount = math.min(sizeVol, math.min(sizeOpen, math.min(sizeHigh, math.min(sizeLow, sizeClose))))
     int lastDir = 0  // 1 = bullish, -1 = bearish, 0 = unknown
-    
+
     if intrabarCount > 0
         float prevClose = na
         for i = 0 to intrabarCount - 1
@@ -484,7 +484,7 @@ calcPower(string method, string tieBreakRule) =>
             float l = array.get(arrLow, i)
             float c = array.get(arrClose, i)
             float v = array.get(arrVol, i)
-            
+
             if method == "Pressure"
                 // === BUYING/SELLING PRESSURE METHOD ===
                 // Proportionally assigns volume based on where price closed within the range
@@ -521,18 +521,18 @@ calcPower(string method, string tieBreakRule) =>
                         if not na(prevClose)
                             dir := c > prevClose ? 1 : (c < prevClose ? -1 : 0)
                     // else "Ignore dojis" - dir stays 0, volume not counted
-                
+
                 // Accumulate volume by direction
                 if dir == 1
                     buyVol += v
                 else if dir == -1
                     sellVol += v
-                
+
                 // Update state for next iteration
                 if dir != 0
                     lastDir := dir
                 prevClose := c
-    
+
     [buyVol, sellVol, intrabarCount]
 
 // PERFORMANCE: Gate all Power calculations by showPowerRow
@@ -863,7 +863,7 @@ checkDisplacement(int idx, float threshold) =>
 
 checkFVG(int idx, string dir) =>
     // FVG (Fair Value Gap) = 3-candle pattern showing strong momentum
-    // 
+    //
     // CANDLE MAPPING (in Pine offset terms, higher = older):
     //   idx-2 = Most recent (continuation after gap)
     //   idx-1 = Middle (displacement/impulse that created gap)
@@ -880,7 +880,7 @@ checkFVG(int idx, string dir) =>
     //   - The gap was created by the middle candle (idx-1) jumping down
     //
     // NOTE: If FVGs appear "off by 2 bars", this mapping may need adjustment
-    
+
     // Check mode
     if fvgMode == "Off"
         true  // Always pass if FVG is off
@@ -891,7 +891,7 @@ checkFVG(int idx, string dir) =>
         else
             bool hasGap = false
             float gapSize = 0.0
-            
+
             if dir == "Bull"
                 if fvgMode == "Strict (body gap)"
                     // Strict: require body gap (close vs open)
@@ -922,12 +922,12 @@ checkFVG(int idx, string dir) =>
                     // Classic: wick gap
                     hasGap := high[idx - 2] < low[idx]
                     gapSize := hasGap ? low[idx] - high[idx - 2] : 0.0
-            
+
             // Apply minimum gap filter
             bool meetsMinGap = true
             if fvgMinGapAtr > 0.0 and hasGap
                 meetsMinGap := gapSize > atr[idx] * fvgMinGapAtr
-            
+
             hasGap and meetsMinGap
 
 checkMSB(int pivotIdx, int dispIdx, int lookback, string dir) =>
@@ -936,7 +936,7 @@ checkMSB(int pivotIdx, int dispIdx, int lookback, string dir) =>
     bool confirmed = false
     int scanStart = dispIdx + 1
     int scanEnd = math.min(dispIdx + lookback, bar_index)
-    
+
     // Need at least one bar to check structure
     // pivotIdx must be within valid historical range for array access
     if pivotIdx < 0 or pivotIdx > bar_index or dispIdx < 0 or dispIdx > bar_index or scanStart > bar_index
@@ -946,17 +946,17 @@ checkMSB(int pivotIdx, int dispIdx, int lookback, string dir) =>
             // Find highest high in lookback period BEFORE displacement (excluding dispIdx)
             // Initialize from first bar in scan range (NOT from dispIdx)
             float recentHigh = high[scanStart]
-            
+
             // Scan remaining bars in lookback period (if any)
             if scanStart < scanEnd
                 for i = scanStart + 1 to scanEnd
                     if high[i] > recentHigh
                         recentHigh := high[i]
-            
+
             // Also consider pivot as minimum structure level (fallback) - user configurable
             if msbUsePivotFallback and high[pivotIdx] > recentHigh
                 recentHigh := high[pivotIdx]
-            
+
             // MSB confirmed if displacement broke above the recent structure
             if high[dispIdx] > recentHigh
                 confirmed := true
@@ -964,17 +964,17 @@ checkMSB(int pivotIdx, int dispIdx, int lookback, string dir) =>
             // Find lowest low in lookback period BEFORE displacement (excluding dispIdx)
             // Initialize from first bar in scan range (NOT from dispIdx)
             float recentLow = low[scanStart]
-            
+
             // Scan remaining bars in lookback period (if any)
             if scanStart < scanEnd
                 for i = scanStart + 1 to scanEnd
                     if low[i] < recentLow
                         recentLow := low[i]
-            
+
             // Also consider pivot as minimum structure level (fallback) - user configurable
             if msbUsePivotFallback and low[pivotIdx] < recentLow
                 recentLow := low[pivotIdx]
-            
+
             // MSB confirmed if displacement broke below the recent structure
             if low[dispIdx] < recentLow
                 confirmed := true
@@ -1027,8 +1027,8 @@ findSwingLow(int leftBars, int rightBars) =>
 
 // Check if new swing is "equal" to existing level (clustered liquidity = stronger)
 isEqualLevel(float newLevel, float existingLevel, float thresholdPct) =>
-    float diff = math.abs(newLevel - existingLevel) / existingLevel * 100
-    diff <= thresholdPct
+    float diff = existingLevel != 0 ? math.abs(newLevel - existingLevel) / existingLevel * 100 : na
+    not na(diff) and diff <= thresholdPct
 
 // Check for bullish sweep (price sweeps SSL then reverses up)
 checkBullishSweep(float sslLevel, float minWickAtr) =>
@@ -1262,26 +1262,26 @@ findNearestOB(array<OrderBlock> blocks, bool isBull) =>
 // Order Block = Nearest opposite candle within 1-3 bars before the impulse candle
 // Prioritizes recency: takes the most recent qualifying impulse, not just strongest
 checkScalperCondition(int tuning) =>
-    
+
     // Max candles to scan back from impulse to find opposite candle (user-adjustable)
-    
+
     // BULL ORDER BLOCK: BEARISH candle before UPWARD impulse
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     bool bullOB = false
     int bullOBIdx = 0
     float bullImpulseStrength = 0.0  // Normalized: body/atr
-    
+
     // BEAR ORDER BLOCK: BULLISH candle before DOWNWARD impulse
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     bool bearOB = false
     int bearOBIdx = 0
     float bearImpulseStrength = 0.0  // Normalized: body/atr
-    
+
     // 1. Find the most recent qualifying impulse candles (single pass)
     int bullImpulseIdx = -1
     int bearImpulseIdx = -1
     int maxIdx = math.min(tuning - 1, bar_index)
-    
+
     for i = 0 to maxIdx
         float body = math.abs(close[i] - open[i])
         float range_c = high[i] - low[i]
@@ -1295,21 +1295,21 @@ checkScalperCondition(int tuning) =>
                 bearImpulseIdx := i
             if bullImpulseIdx != -1 and bearImpulseIdx != -1
                 break
-    
+
     // Determine effective window (Base + Adaptive extension)
     int maxScan = useAdaptiveScan ? effectiveScanWindow * 2 : effectiveScanWindow
-    
+
     // 2. Scan 1-3 candles back from impulse to find nearest opposite (bearish) candle
     if bullImpulseIdx >= 0
         float impulseBody = close[bullImpulseIdx] - open[bullImpulseIdx]
         float atrAtImpulse = atr[bullImpulseIdx]  // Use ATR at impulse candle (from global atr series)
         bullImpulseStrength := atrAtImpulse > 0 ? impulseBody / atrAtImpulse : 0.0  // Normalized strength
-        
+
         for j = 1 to maxScan
             int candidateIdx = bullImpulseIdx + j
             if candidateIdx > bar_index
                 break
-            
+
             // ADAPTIVE SCAN: In low volatility, we allow scanning further back
             // If checking past normal window, require strictly low volatility to accept it
             bool isExtendedScan = j > obScanWindow
@@ -1317,7 +1317,7 @@ checkScalperCondition(int tuning) =>
             if isExtendedScan
                 // Simple low vol check: current range < average range
                 lowVolCondition := (high[candidateIdx] - low[candidateIdx]) < atr[candidateIdx]
-            
+
             if isExtendedScan and (not useAdaptiveScan or not lowVolCondition)
                 break
 
@@ -1336,13 +1336,13 @@ checkScalperCondition(int tuning) =>
                 bullOBIdx := candidateIdx
                 bullOB := true
                 break
-    
+
     // 2. Scan 1-3 candles back from impulse to find nearest opposite (bullish) candle
     if bearImpulseIdx >= 0
         float bearImpBody = open[bearImpulseIdx] - close[bearImpulseIdx]
         float atrAtBearImpulse = atr[bearImpulseIdx]  // Use ATR at impulse candle (from global atr series)
         bearImpulseStrength := atrAtBearImpulse > 0 ? bearImpBody / atrAtBearImpulse : 0.0  // Normalized strength
-        
+
         for j = 1 to maxScan
             int candidateIdx = bearImpulseIdx + j
             if candidateIdx > bar_index
@@ -1353,7 +1353,7 @@ checkScalperCondition(int tuning) =>
             bool lowVolCondition = true
             if isExtendedScan
                 lowVolCondition := (high[candidateIdx] - low[candidateIdx]) < atr[candidateIdx]
-            
+
             if isExtendedScan and (not useAdaptiveScan or not lowVolCondition)
                 break
 
@@ -1372,7 +1372,7 @@ checkScalperCondition(int tuning) =>
                 bearOBIdx := candidateIdx
                 bearOB := true
                 break
-    
+
     [bearOB, bullOB, bearOBIdx, bullOBIdx, bearImpulseStrength, bullImpulseStrength]
 
 // === VISUAL GENERATION ===
@@ -1467,35 +1467,35 @@ createBorder(OrderBlock block, int leftBar, string rMode) =>
 createCornerAccents(OrderBlock block, int leftBar, string rMode) =>
     // Create elegant corner markers
     corners = array.new<box>()
-    
+
     // Only create corners if enabled, for Strong/Elite blocks, and not in Borders only mode
     if showCornerAccents and (block.strength == "Strong" or block.strength == "Elite") and rMode != "Borders only"
         color accentCol = block.direction == DIR_BULL ? bullBorder : bearBorder
         float blockHeight = block.top - block.bot
         float cornerHeight = blockHeight * 0.15  // 15% of block height
         int cornerWidth = 6  // 6 bars width
-        
+
         // Use bar_index for corners
         int leftBarIdx = leftBar
         int rightBarIdx = leftBarIdx + cornerWidth
-        
+
         // Top-left corner
-        box tlCorner = box.new(leftBarIdx, block.top, 
-             rightBarIdx, block.top - cornerHeight, 
+        box tlCorner = box.new(leftBarIdx, block.top,
+             rightBarIdx, block.top - cornerHeight,
              border_color=accentCol, border_width=2, bgcolor=color.new(accentCol, 70))
         array.push(corners, tlCorner)
-        
+
         // Bottom-left corner
         box blCorner = box.new(leftBarIdx, block.bot + cornerHeight,
              rightBarIdx, block.bot,
              border_color=accentCol, border_width=2, bgcolor=color.new(accentCol, 70))
         array.push(corners, blCorner)
-    
+
     corners
 
 buildLabelText(OrderBlock block) =>
     string labelText = ""
-    
+
     // Strength indicator (using elegant symbols)
     if showStrength
         if block.strength == "Elite"
@@ -1506,21 +1506,21 @@ buildLabelText(OrderBlock block) =>
             labelText += "◇ "
         else
             labelText += "○ "
-    
+
     // Volume
     if showVolLabel
         labelText += formatVolume(block.totalVolume)
-    
+
     // Retest count with elegant format
     if showRetests and block.retestCount > 0
         labelText += "\n" + str.tostring(block.retestCount) + "× TEST"
-    
+
     // Status indicator
     if block.rejected
         labelText += block.direction == DIR_BULL ? "\n↗ BOUNCE" : "\n↘ REJECT"
     else if block.touched
         labelText += "\n● ACTIVE"
-    
+
     labelText
 
 // === LIQUIDITY SWEEP VISUAL FUNCTIONS ===
@@ -1711,7 +1711,7 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
     if shouldCreate and idx > 0 and idx <= bar_index
         float top = high[idx]
         float bot = low[idx]
-        
+
         // Smart sizing - now configurable with ICT-aligned anchoring
         bool applySmartSizing = blockSizing == "Smart" and (smartSizingAppliesTo == "All timeframes" or is_scalping)
         if applySmartSizing
@@ -1734,14 +1734,14 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
         else if blockSizing == "Body Only"
             top := math.max(open[idx], close[idx])
             bot := math.min(open[idx], close[idx])
-        
+
         float vol = volume[idx]
         bool aligned = isBull ? close[idx] > sma50[idx] : close[idx] < sma50[idx]
         float body = math.abs(close[idx] - open[idx])
-        
+
         // Volume Profile analysis (Premium feature)
         float vpConcentration = useVolumeProfile ? analyzeVolumeProfile(top, bot, vpLookbackEff) : 0.0
-        
+
         // Enhanced strength with VP and crypto boost
         string strength = useVolumeProfile ?
              getEnhancedStrength(vol, body, aligned, vpConcentration, isBull, idx) :
@@ -1794,23 +1794,23 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
 
             box[] volBoxes = createVolumeGradient(newBlock, leftBar, effectiveGridSegments, effectiveRenderMode)
             newBlock.volumeBoxes := volBoxes
-            
+
             [topLine, botLine, fill] = createBorder(newBlock, leftBar, effectiveRenderMode)
             newBlock.topLine := topLine
             newBlock.botLine := botLine
             newBlock.bgFill := fill
-            
+
             // Add corner accents
             newBlock.cornerBoxes := createCornerAccents(newBlock, leftBar, effectiveRenderMode)
-            
+
             // Create label if any label feature is enabled
             if showAnyLabel
                 label lbl = createVolumeLabel(newBlock)
                 newBlock.volLabel := lbl
-            
+
             array.push(blocks, newBlock)
             created := true
-    
+
     created
 
 // === LIQUIDITY SWEEP HELPER FUNCTIONS ===
@@ -1831,7 +1831,7 @@ updateLiquidityLevel(LiquiditySweep sweep) =>
 // Create liquidity level entry with equal H/L check
 createLiquidityLevelEntry(float level, int levelBar, bool isBSL, array<LiquiditySweep> levels, bool createVisualLine) =>
     bool isEqual = false
-    
+
     // Check existing levels for "equality" (clustered stops)
     int levelCount = array.size(levels)
     if markEqualHL and levelCount > 0
@@ -1841,18 +1841,18 @@ createLiquidityLevelEntry(float level, int levelBar, bool isBSL, array<Liquidity
                 isEqual := true
                 existing.isEqual := true  // Mark existing as equal too
                 break
-    
+
     // Create level line only if requested
     line levelLine = na
     if createVisualLine
         levelLine := createLiquidityLevel(level, levelBar, isBSL)
-    
+
     // Create LiquiditySweep object
     int direction = isBSL ? DIR_BEAR : DIR_BULL  // BSL breaks bearish, SSL breaks bullish
     LiquiditySweep newLevel = LiquiditySweep.new(
          levelLine, na, na, level, levelBar, direction, isEqual,
          false, false, 0, 0.0, 0.0, "", false, 0, bar_index)
-    
+
     array.push(levels, newLevel)
 
 // Process sweeps and runs for liquidity levels
@@ -1864,16 +1864,16 @@ processSweepsAndRuns(array<LiquiditySweep> levels, bool isBSL) =>
     bool sweepDetected = false
     bool runDetected = false
     int sweepBar = 0
-    
+
     int levelCount = array.size(levels)
     if levelCount > 0
         for i = levelCount - 1 to 0
             LiquiditySweep sweep = array.get(levels, i)
-            
+
             // Skip if already swept or run
             if sweep.swept or sweep.ranThrough
                 continue
-            
+
             if isBSL
                 // Check for bearish sweep (BSL taken, price reverses down)
                 [detected, wickExt] = checkBearishSweep(sweep.level, sweepWickMin)
@@ -1883,7 +1883,7 @@ processSweepsAndRuns(array<LiquiditySweep> levels, bool isBSL) =>
                     sweep.sweepBar := bar_index
                     sweep.sweepWick := wickExt
                     sweep.sweepClose := close
-                    
+
                     // Check confluence with order blocks
                     bool nearOB = false
                     int bullBlockCount = array.size(bullBlocks)
@@ -1893,16 +1893,16 @@ processSweepsAndRuns(array<LiquiditySweep> levels, bool isBSL) =>
                             if math.abs(sweep.level - b.top) / sweep.level * 100 < 0.5
                                 nearOB := true
                                 break
-                    
+
                     // Calculate quality
                     bool volSpike = volume > avgVol
                     sweep.quality := getSweepQuality(wickExt, volSpike, nearOB, sweep.isEqual)
-                    
+
                     // Only create visuals when showSweepEvents is enabled
                     if showSweepEvents
                         sweep.sweepBox := createSweepBox(sweep.level, wickExt, bar_index, false)
                         sweep.sweepLabel := createSweepLabel(sweep.level, wickExt, bar_index, false, sweep.quality)
-                    
+
                     sweepDetected := true
                     sweepBar := bar_index
                 else
@@ -1922,7 +1922,7 @@ processSweepsAndRuns(array<LiquiditySweep> levels, bool isBSL) =>
                     sweep.sweepBar := bar_index
                     sweep.sweepWick := wickExt
                     sweep.sweepClose := close
-                    
+
                     // Check confluence with order blocks
                     bool nearOB = false
                     int bearBlockCount = array.size(bearBlocks)
@@ -1932,16 +1932,16 @@ processSweepsAndRuns(array<LiquiditySweep> levels, bool isBSL) =>
                             if math.abs(sweep.level - b.bot) / sweep.level * 100 < 0.5
                                 nearOB := true
                                 break
-                    
+
                     // Calculate quality
                     bool volSpike = volume > avgVol
                     sweep.quality := getSweepQuality(wickExt, volSpike, nearOB, sweep.isEqual)
-                    
+
                     // Only create visuals when showSweepEvents is enabled
                     if showSweepEvents
                         sweep.sweepBox := createSweepBox(sweep.level, wickExt, bar_index, true)
                         sweep.sweepLabel := createSweepLabel(sweep.level, wickExt, bar_index, true, sweep.quality)
-                    
+
                     sweepDetected := true
                     sweepBar := bar_index
                 else
@@ -1952,7 +1952,7 @@ processSweepsAndRuns(array<LiquiditySweep> levels, bool isBSL) =>
                         sweep.ranThrough := true
                         sweep.sweepBar := bar_index
                         runDetected := true
-    
+
     [sweepDetected, runDetected, sweepBar]
 
 // Update all liquidity levels
@@ -1973,7 +1973,7 @@ trimLevels(array<LiquiditySweep> levels, int maxCount) =>
             if sweep.swept or sweep.ranThrough
                 deleteLiquiditySweep(sweep)
                 array.remove(levels, i)
-        
+
         // If still too many, remove oldest
         while array.size(levels) > maxCount
             deleteLiquiditySweep(array.shift(levels))
@@ -1987,13 +1987,13 @@ checkLiquidityProximity(array<LiquiditySweep> levels, bool isBSL) =>
             LiquiditySweep sweep = array.get(levels, i)
             if sweep.swept or sweep.ranThrough
                 continue
-            
+
             float dist = 0.0
             if isBSL
                 dist := sweep.level > close ? (sweep.level - close) / close * 100 : -1.0
             else
                 dist := sweep.level < close ? (close - sweep.level) / close * 100 : -1.0
-            
+
             if dist > 0 and dist <= liquidityProximityPct
                 isNear := true
                 break
@@ -2125,14 +2125,14 @@ wasInBearOB := inBearOBNow
 // === PROXIMITY ALERT DETECTION ===
 if proximityAlertEnabled
     // Find nearest qualifying OB zones
-    [nearBull, distBull] = findNearestOB(bullBlocks, true)
-    [nearBear, distBear] = findNearestOB(bearBlocks, false)
-    
+    [nearBull, _distBull] = findNearestOB(bullBlocks, true)
+    [nearBear, _distBear] = findNearestOB(bearBlocks, false)
+
     // Trigger alert only on state change (entering proximity range)
     // This prevents spam - only alerts once when first entering the zone
     nearBullOB := nearBull and not wasNearBullOB
     nearBearOB := nearBear and not wasNearBearOB
-    
+
     // Update state for next bar
     wasNearBullOB := nearBull
     wasNearBearOB := nearBear
@@ -2184,7 +2184,7 @@ if shouldRunLiquidity
     // 6. Trim old levels (remove swept/run levels after N bars)
     trimLevels(bslLevels, maxLiquidityLevels)
     trimLevels(sslLevels, maxLiquidityLevels)
-    
+
     // 7. Check proximity alerts (also gated by enableLiquidity)
     if alertApproachingLiquidity
         nearBSL := checkLiquidityProximity(bslLevels, true)
@@ -2230,20 +2230,20 @@ if showDashboard and barstate.islast
         lastDashboardSize := dashboardSize
 
     table.clear(dashboard, 0, 0, 6, 11)
-    
+
     // Header with mode tags
     table.merge_cells(dashboard, 0, 0, 6, 0)
     string presetDisplay = effectivePreset == "Scalping" ? "SCALPING" : effectivePreset == "Swing" ? "SWING" : "POSITION"
     string modeTag = settingsMode == "Auto" ? "MODE:AUTO" : "MODE:MANUAL"
     string confirmTag = signalTiming == "Confirmed (bar close)" ? " | CONFIRMED" : ""
-    
+
     // HTF Trend in Header (uses cached security data from global scope)
     bool uptrend = close > sma50
     string htfStr = ""
     // Use pre-fetched HTF data (security calls at global scope for performance)
     if _needHtfData and not na(htfClose) and not na(htfSma50)
         htfStr := " | LTF:" + (uptrend ? "▲" : "▼") + " HTF:" + (htfClose > htfSma50 ? "▲" : "▼")
-    
+
     string headerText = presetDisplay + " | " + modeTag + confirmTag + htfStr
     table.cell(dashboard, 0, 0, headerText, text_color=color.white, text_size=dashHeaderSize)
 
@@ -2255,11 +2255,11 @@ if showDashboard and barstate.islast
     table.cell(dashboard, 4, 1, "Tests", text_color=color.gray, text_size=dashTextSize, width=0)
     table.cell(dashboard, 5, 1, "Status", text_color=color.gray, text_size=dashTextSize, width=0)
     table.cell(dashboard, 6, 1, "Vol", text_color=color.gray, text_size=dashTextSize, width=0)
-    
+
     int row = 2
     row := renderDashboardBlocks(dashboard, row, bearBlocks, false)
     row := renderDashboardBlocks(dashboard, row, bullBlocks, true)
-    
+
     // Liquidity section (show if liquidity module is enabled with visuals OR any alerts)
     // Dashboard shows BSL/SSL info even in alerts-only mode (no visual lines)
     if enableLiquidity and (showLiquidityLevels or showSweepEvents or showLiquidityRuns or alertLiquiditySweep or alertLiquidityRun or alertApproachingLiquidity)
@@ -2309,18 +2309,18 @@ if showDashboard and barstate.islast
                     table.cell(dashboard, 0, row, sslStatus + " ▼", text_color=color.new(#ff6600, 0), text_size=dashTextSize, width=0)
                     table.cell(dashboard, 1, row, str.tostring(round2(sslDist)) + "%", text_color=color.white, text_size=dashTextSize, width=0)
                     row += 1
-    
+
     // === POWER ROW (Intrabar Volume Dominance) - Always at bottom ===
     if showPowerRow
         // Use fixed rows at bottom of table (rows 8 and 9)
         int powerSepRow = 8
         int powerDataRow = 9
-        
+
         // Format LTF indicator for display
-        string ltfDisplay = effectivePowerLtf == "1" ? "@1m" : effectivePowerLtf == "5" ? "@5m" : 
-             effectivePowerLtf == "15" ? "@15m" : effectivePowerLtf == "60" ? "@1h" : 
+        string ltfDisplay = effectivePowerLtf == "1" ? "@1m" : effectivePowerLtf == "5" ? "@5m" :
+             effectivePowerLtf == "15" ? "@15m" : effectivePowerLtf == "60" ? "@1h" :
              effectivePowerLtf == "240" ? "@4h" : "@" + effectivePowerLtf
-        
+
         // Separator line with LTF indicator
         string powerHeader = "POWER " + ltfDisplay
         table.cell(dashboard, 0, powerSepRow, powerHeader, text_color=color.gray, text_size=dashTextSize, width=0)
@@ -2330,7 +2330,7 @@ if showDashboard and barstate.islast
         table.cell(dashboard, 4, powerSepRow, "", text_size=dashTextSize, width=0)
         table.cell(dashboard, 5, powerSepRow, "", text_size=dashTextSize, width=0)
         table.cell(dashboard, 6, powerSepRow, "", text_size=dashTextSize, width=0)
-        
+
         // Select display values based on signal timing mode
         // Confirmed mode uses latched values (stable, no intrabar flicker)
         // Realtime mode uses live values (updates every tick)
@@ -2339,15 +2339,15 @@ if showDashboard and barstate.islast
         int displayIntrabarCount = signalTiming == "Confirmed (bar close)" ? latchedIntrabarCount : intrabarCount
         // Include na(smoothedPowerPct) check so "—" is shown instead of "0%" when data is invalid
         bool displayLowConf = signalTiming == "Confirmed (bar close)" ? latchedPowerLowConf : (powerLowConf or na(smoothedPowerPct))
-        
+
         // Determine display values
         string sideText = displaySide == 1 ? "BUY" : (displaySide == -1 ? "SELL" : "NEUTRAL")
         color sideCol = displaySide == 1 ? bullBorder : (displaySide == -1 ? bearBorder : color.gray)
-        
+
         // Use smoothed value for display, handle low confidence
         float displayPct = displayLowConf ? 0.0 : math.min(displayPctRaw, 100.0)
         color pctCol = displayLowConf ? color.gray : sideCol
-        
+
         // Column 0: "Power" label with mode indicator
         string modeIndicator = powerMode == "Auto" ? "Power" : "Power*"
         table.cell(dashboard, 0, powerDataRow, modeIndicator, text_color=color.white, text_size=dashTextSize, width=0)

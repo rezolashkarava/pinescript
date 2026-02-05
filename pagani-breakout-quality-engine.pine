@@ -1,6 +1,13 @@
 //@version=6
 indicator("Breakout Quality Engine Ultra [Paganie] v4.2", overlay=true, max_labels_count=200)
 
+// Targeted max_bars_back for series used in large lookbacks (IPDA 60-day, percentrank, etc.)
+max_bars_back(open, 3000)
+max_bars_back(high, 3000)
+max_bars_back(low, 3000)
+max_bars_back(close, 3000)
+max_bars_back(volume, 3000)
+
 // ============================================================================
 // BREAKOUT QUALITY ENGINE ULTRA V4.2
 // Complementary indicator to ICT Order Block Pro [Paganie]
@@ -74,10 +81,12 @@ useH1Pivots     = input.bool(false, "Hourly Pivots",               group=GRP_LEV
 showVwap        = input.bool(true,  "Daily VWAP",                  group=GRP_LEVELS, tooltip="Display daily Volume Weighted Average Price.")
 useRoundNumbers = input.bool(true,  "Round Number Levels (Crypto)", group=GRP_LEVELS,
      tooltip="Track psychological round number levels. Half-magnitude grid: $0.05/$0.10/$0.50/$1/$5/$10/$50/$100 etc.")
+useIpdaLevels   = input.bool(false, "IPDA Levels (20/40/60-Day)", group=GRP_LEVELS,
+     tooltip="ICT Interbank Price Delivery Algorithm. Tracks 20/40/60-day highs and lows as Draw on Liquidity targets.")
 
 string GRP_FILTERS = "🎯 Filters"
 useSessionFilter = input.bool(true, "Killzone Filter",       group=GRP_FILTERS,
-     tooltip="Boost signals during London (2-5), NY (7-10), London Close (10-12), and Asia (20-0) sessions (NY time).")
+     tooltip="Boost signals during London (2-5), NY (7-10), London Close (10-12), and Asia (19-0) sessions (NY time).")
 useZoneFilter    = input.bool(true, "Premium/Discount Filter", group=GRP_FILTERS,
      tooltip="Favor longs in discount zones and shorts in premium zones.")
 useHtfBias       = input.bool(true, "HTF Trend Filter",       group=GRP_FILTERS,
@@ -127,7 +136,7 @@ londonStart    = input.int(2,  "London Start (NY)",       minval=0, maxval=23, g
 londonEnd      = input.int(5,  "London End (NY)",         minval=0, maxval=23, group=GRP_TIME)
 nyStart        = input.int(7,  "NY Start (NY)",           minval=0, maxval=23, group=GRP_TIME)
 nyEnd          = input.int(10, "NY End (NY)",             minval=0, maxval=23, group=GRP_TIME)
-asiaStart      = input.int(20, "Asia Start (NY)",         minval=0, maxval=23, group=GRP_TIME)
+asiaStart      = input.int(19, "Asia Start (NY)",         minval=0, maxval=23, group=GRP_TIME)
 asiaEnd        = input.int(0,  "Asia End (NY)",           minval=0, maxval=23, group=GRP_TIME)
 ldnCloseStart  = input.int(10, "London Close Start (NY)", minval=0, maxval=23, group=GRP_TIME)
 ldnCloseEnd    = input.int(12, "London Close End (NY)",   minval=0, maxval=23, group=GRP_TIME)
@@ -137,6 +146,8 @@ useCmeOpen     = input.bool(true, "CME Open Macro (Crypto)", group=GRP_TIME,
      tooltip="Sunday 18:00-18:15 ET. Important for crypto gap-fill setups.")
 useFundingRate = input.bool(true, "Funding Rate Windows (Crypto)", group=GRP_TIME,
      tooltip="±10min around 00:00, 08:00, 16:00 UTC funding resets.")
+useSilverBullet = input.bool(true, "Silver Bullet Windows", group=GRP_TIME,
+     tooltip="ICT Silver Bullet: 3:00-4:00 AM, 10:00-11:00 AM, 2:00-3:00 PM ET. High-probability 1-hour windows.")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // COLORS
@@ -296,7 +307,8 @@ bool inNyPmMacro    = hourNy == 13 and minuteNy >= 10 and minuteNy < 40
 bool inNyCloseMacro = hourNy == 15 and minuteNy >= 15 and minuteNy < 45
 bool isMacroTime    = useMacroTimes and (inLondonMacro1 or inLondonMacro2 or inNyMacro1 or inNyMacro2 or inNyMacro3 or inNyLunchMacro or inNyPmMacro or inNyCloseMacro)
 bool inCmeOpenMacro = isCrypto and useCmeOpen and dayofweek == dayofweek.sunday and hourNy == 18 and minuteNy < 15
-bool isMacroTimeEff = isMacroTime or inCmeOpenMacro
+bool inSilverBullet = useSilverBullet and (hourNy == 3 or hourNy == 10 or hourNy == 14)
+bool isMacroTimeEff = isMacroTime or inCmeOpenMacro or inSilverBullet
 
 // Funding rate windows (00:00, 08:00, 16:00 UTC ±10 min)
 int  hourUtc     = hour(time, "UTC")
@@ -432,6 +444,41 @@ float roundAbove = not na(halfMag) ? roundBelow + halfMag : na
 float effRoundAbove = not na(roundAbove) and roundAbove > close ? roundAbove : not na(halfMag) ? roundAbove + halfMag : na
 float effRoundBelow = not na(roundBelow) and roundBelow < close ? roundBelow : not na(halfMag) and roundBelow >= halfMag ? roundBelow - halfMag : na
 
+// IPDA Levels (20/40/60-day highs/lows as Draw on Liquidity targets)
+// Uses daily timeframe with [1] offset for non-repainting institutional reference levels
+[ipda20High, ipda20Low, ipda40High, ipda40Low, ipda60High, ipda60Low] = request.security(
+     syminfo.tickerid, "D",
+     [ta.highest(high, 20)[1], ta.lowest(low, 20)[1],
+      ta.highest(high, 40)[1], ta.lowest(low, 40)[1],
+      ta.highest(high, 60)[1], ta.lowest(low, 60)[1]],
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+// Use the nearest untouched IPDA level as a key level (closest above/below)
+float ipdaAbove = na
+float ipdaBelow = na
+string ipdaAboveName = ""
+string ipdaBelowName = ""
+if useIpdaLevels
+    // Above close: find closest IPDA high
+    if not na(ipda20High) and ipda20High > close and (na(ipdaAbove) or ipda20High < ipdaAbove)
+        ipdaAbove := ipda20High
+        ipdaAboveName := "IPDA20"
+    if not na(ipda40High) and ipda40High > close and (na(ipdaAbove) or ipda40High < ipdaAbove)
+        ipdaAbove := ipda40High
+        ipdaAboveName := "IPDA40"
+    if not na(ipda60High) and ipda60High > close and (na(ipdaAbove) or ipda60High < ipdaAbove)
+        ipdaAbove := ipda60High
+        ipdaAboveName := "IPDA60"
+    // Below close: find closest IPDA low
+    if not na(ipda20Low) and ipda20Low < close and (na(ipdaBelow) or ipda20Low > ipdaBelow)
+        ipdaBelow := ipda20Low
+        ipdaBelowName := "IPDA20"
+    if not na(ipda40Low) and ipda40Low < close and (na(ipdaBelow) or ipda40Low > ipdaBelow)
+        ipdaBelow := ipda40Low
+        ipdaBelowName := "IPDA40"
+    if not na(ipda60Low) and ipda60Low < close and (na(ipdaBelow) or ipda60Low > ipdaBelow)
+        ipdaBelow := ipda60Low
+        ipdaBelowName := "IPDA60"
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PREMIUM/DISCOUNT ZONES & OTE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -539,6 +586,11 @@ if useH1Pivots and not na(lastPh1h) and lastPh1h > close                        
     if na(bestLongDist) or d < bestLongDist
         bestLongDist := d, bestLongLvl := lastPh1h, bestLongName := "H1-P", bestLongTier := 2
 
+if useIpdaLevels and not na(ipdaAbove) and ipdaAbove > close                       // Tier 4
+    float d = ipdaAbove - close
+    if na(bestLongDist) or d < bestLongDist
+        bestLongDist := d, bestLongLvl := ipdaAbove, bestLongName := ipdaAboveName, bestLongTier := 4
+
 if isCrypto and useRoundNumbers and not na(effRoundAbove) and effRoundAbove > close  // Tier 1
     float d = effRoundAbove - close
     if na(bestLongDist) or d < bestLongDist
@@ -570,6 +622,11 @@ if useH1Pivots and not na(lastPl1h) and lastPl1h < close                        
     if na(bestShortDist) or d < bestShortDist
         bestShortDist := d, bestShortLvl := lastPl1h, bestShortName := "H1-P", bestShortTier := 2
 
+if useIpdaLevels and not na(ipdaBelow) and ipdaBelow < close                       // Tier 4
+    float d = close - ipdaBelow
+    if na(bestShortDist) or d < bestShortDist
+        bestShortDist := d, bestShortLvl := ipdaBelow, bestShortName := ipdaBelowName, bestShortTier := 4
+
 if isCrypto and useRoundNumbers and not na(effRoundBelow) and effRoundBelow < close  // Tier 1
     float d = close - effRoundBelow
     if na(bestShortDist) or d < bestShortDist
@@ -588,17 +645,19 @@ bool  shortConfluence = false
 
 int longLevelCount = 0
 if not na(bestLongLvl) and not na(confluenceDist)
-    if usePdhPdl and not na(pdh) and pdh > close and math.abs(pdh - bestLongLvl) <= confluenceDist
+    if usePdhPdl and not na(pdh) and pdh > close and bestLongName != "PDH" and math.abs(pdh - bestLongLvl) <= confluenceDist
         longLevelCount += 1
-    if usePwhPwl and not na(pwh) and pwh > close and math.abs(pwh - bestLongLvl) <= confluenceDist
+    if usePwhPwl and not na(pwh) and pwh > close and bestLongName != "PWH" and math.abs(pwh - bestLongLvl) <= confluenceDist
         longLevelCount += 1
-    if usePmhPml and not na(pmh) and pmh > close and math.abs(pmh - bestLongLvl) <= confluenceDist
+    if usePmhPml and not na(pmh) and pmh > close and bestLongName != "PMH" and math.abs(pmh - bestLongLvl) <= confluenceDist
         longLevelCount += 1
-    if useOpeningRange and orComplete and not na(orHigh) and orHigh > close and math.abs(orHigh - bestLongLvl) <= confluenceDist
+    if useOpeningRange and orComplete and not na(orHigh) and orHigh > close and bestLongName != "OR-H" and math.abs(orHigh - bestLongLvl) <= confluenceDist
         longLevelCount += 1
-    if useH1Pivots and not na(lastPh1h) and lastPh1h > close and math.abs(lastPh1h - bestLongLvl) <= confluenceDist
+    if useH1Pivots and not na(lastPh1h) and lastPh1h > close and bestLongName != "H1-P" and math.abs(lastPh1h - bestLongLvl) <= confluenceDist
         longLevelCount += 1
-    if isCrypto and useRoundNumbers and not na(effRoundAbove) and effRoundAbove > close and math.abs(effRoundAbove - bestLongLvl) <= confluenceDist
+    if useIpdaLevels and not na(ipdaAbove) and ipdaAbove > close and not str.startswith(bestLongName, "IPDA") and math.abs(ipdaAbove - bestLongLvl) <= confluenceDist
+        longLevelCount += 1
+    if isCrypto and useRoundNumbers and not na(effRoundAbove) and effRoundAbove > close and bestLongName != "RND" and math.abs(effRoundAbove - bestLongLvl) <= confluenceDist
         longLevelCount += 1
     if showVwap and not na(vwapDaily) and vwapDaily > close and math.abs(vwapDaily - bestLongLvl) <= confluenceDist
         longLevelCount += 1
@@ -606,17 +665,19 @@ if not na(bestLongLvl) and not na(confluenceDist)
 
 int shortLevelCount = 0
 if not na(bestShortLvl) and not na(confluenceDist)
-    if usePdhPdl and not na(pdl) and pdl < close and math.abs(pdl - bestShortLvl) <= confluenceDist
+    if usePdhPdl and not na(pdl) and pdl < close and bestShortName != "PDL" and math.abs(pdl - bestShortLvl) <= confluenceDist
         shortLevelCount += 1
-    if usePwhPwl and not na(pwl) and pwl < close and math.abs(pwl - bestShortLvl) <= confluenceDist
+    if usePwhPwl and not na(pwl) and pwl < close and bestShortName != "PWL" and math.abs(pwl - bestShortLvl) <= confluenceDist
         shortLevelCount += 1
-    if usePmhPml and not na(pml) and pml < close and math.abs(pml - bestShortLvl) <= confluenceDist
+    if usePmhPml and not na(pml) and pml < close and bestShortName != "PML" and math.abs(pml - bestShortLvl) <= confluenceDist
         shortLevelCount += 1
-    if useOpeningRange and orComplete and not na(orLow) and orLow < close and math.abs(orLow - bestShortLvl) <= confluenceDist
+    if useOpeningRange and orComplete and not na(orLow) and orLow < close and bestShortName != "OR-L" and math.abs(orLow - bestShortLvl) <= confluenceDist
         shortLevelCount += 1
-    if useH1Pivots and not na(lastPl1h) and lastPl1h < close and math.abs(lastPl1h - bestShortLvl) <= confluenceDist
+    if useH1Pivots and not na(lastPl1h) and lastPl1h < close and bestShortName != "H1-P" and math.abs(lastPl1h - bestShortLvl) <= confluenceDist
         shortLevelCount += 1
-    if isCrypto and useRoundNumbers and not na(effRoundBelow) and effRoundBelow < close and math.abs(effRoundBelow - bestShortLvl) <= confluenceDist
+    if useIpdaLevels and not na(ipdaBelow) and ipdaBelow < close and not str.startswith(bestShortName, "IPDA") and math.abs(ipdaBelow - bestShortLvl) <= confluenceDist
+        shortLevelCount += 1
+    if isCrypto and useRoundNumbers and not na(effRoundBelow) and effRoundBelow < close and bestShortName != "RND" and math.abs(effRoundBelow - bestShortLvl) <= confluenceDist
         shortLevelCount += 1
     if showVwap and not na(vwapDaily) and vwapDaily < close and math.abs(vwapDaily - bestShortLvl) <= confluenceDist
         shortLevelCount += 1

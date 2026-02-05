@@ -234,30 +234,23 @@ calcBuyPressure(float h, float l, float c, float o) =>
         buyPressure := c > o ? 1.0 : (c < o ? 0.0 : 0.5)
     buyPressure
 
-// TF1 data - fetch OHLCV for Pressure-based sentiment
-[tf1Vol, tf1Open, tf1High, tf1Low, tf1Close] = request.security(effectiveSymbol, tf1, [volume, open, high, low, close], lookahead=barmerge.lookahead_off)
-float tf1AvgVol = request.security(effectiveSymbol, tf1, ta.sma(volume, avgVolumePeriod), lookahead=barmerge.lookahead_off)
+// TF1-4 data: consolidated OHLCV + avgVol into single request.security() per TF
+[tf1Vol, tf1Open, tf1High, tf1Low, tf1Close, tf1AvgVol] = request.security(effectiveSymbol, tf1, [volume, open, high, low, close, ta.sma(volume, avgVolumePeriod)], lookahead=barmerge.lookahead_off)
 float tf1BuyPressure = calcBuyPressure(tf1High, tf1Low, tf1Close, tf1Open)
 bool tf1Bullish = tf1BuyPressure > 0.5
 float tf1VsAvg = tf1AvgVol > 0 ? tf1Vol / tf1AvgVol : 1.0
 
-// TF2 data
-[tf2Vol, tf2Open, tf2High, tf2Low, tf2Close] = request.security(effectiveSymbol, tf2, [volume, open, high, low, close], lookahead=barmerge.lookahead_off)
-float tf2AvgVol = request.security(effectiveSymbol, tf2, ta.sma(volume, avgVolumePeriod), lookahead=barmerge.lookahead_off)
+[tf2Vol, tf2Open, tf2High, tf2Low, tf2Close, tf2AvgVol] = request.security(effectiveSymbol, tf2, [volume, open, high, low, close, ta.sma(volume, avgVolumePeriod)], lookahead=barmerge.lookahead_off)
 float tf2BuyPressure = calcBuyPressure(tf2High, tf2Low, tf2Close, tf2Open)
 bool tf2Bullish = tf2BuyPressure > 0.5
 float tf2VsAvg = tf2AvgVol > 0 ? tf2Vol / tf2AvgVol : 1.0
 
-// TF3 data
-[tf3Vol, tf3Open, tf3High, tf3Low, tf3Close] = request.security(effectiveSymbol, tf3, [volume, open, high, low, close], lookahead=barmerge.lookahead_off)
-float tf3AvgVol = request.security(effectiveSymbol, tf3, ta.sma(volume, avgVolumePeriod), lookahead=barmerge.lookahead_off)
+[tf3Vol, tf3Open, tf3High, tf3Low, tf3Close, tf3AvgVol] = request.security(effectiveSymbol, tf3, [volume, open, high, low, close, ta.sma(volume, avgVolumePeriod)], lookahead=barmerge.lookahead_off)
 float tf3BuyPressure = calcBuyPressure(tf3High, tf3Low, tf3Close, tf3Open)
 bool tf3Bullish = tf3BuyPressure > 0.5
 float tf3VsAvg = tf3AvgVol > 0 ? tf3Vol / tf3AvgVol : 1.0
 
-// TF4 data
-[tf4Vol, tf4Open, tf4High, tf4Low, tf4Close] = request.security(effectiveSymbol, tf4, [volume, open, high, low, close], lookahead=barmerge.lookahead_off)
-float tf4AvgVol = request.security(effectiveSymbol, tf4, ta.sma(volume, avgVolumePeriod), lookahead=barmerge.lookahead_off)
+[tf4Vol, tf4Open, tf4High, tf4Low, tf4Close, tf4AvgVol] = request.security(effectiveSymbol, tf4, [volume, open, high, low, close, ta.sma(volume, avgVolumePeriod)], lookahead=barmerge.lookahead_off)
 float tf4BuyPressure = calcBuyPressure(tf4High, tf4Low, tf4Close, tf4Open)
 bool tf4Bullish = tf4BuyPressure > 0.5
 float tf4VsAvg = tf4AvgVol > 0 ? tf4Vol / tf4AvgVol : 1.0
@@ -292,12 +285,8 @@ getShortSymbol(string sym) =>
         result := str.substring(sym, colonPos + 1)
     result
 
-// === INTRABAR DATA FOR BUY/SELL ANALYSIS ===
-arrOpen = request.security_lower_tf(effectiveSymbol, powerLtfSafe, open, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrHigh = request.security_lower_tf(effectiveSymbol, powerLtfSafe, high, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrLow = request.security_lower_tf(effectiveSymbol, powerLtfSafe, low, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrClose = request.security_lower_tf(effectiveSymbol, powerLtfSafe, close, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
-arrVol = request.security_lower_tf(effectiveSymbol, powerLtfSafe, volume, ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
+// === INTRABAR DATA FOR BUY/SELL ANALYSIS (consolidated single request) ===
+[arrOpen, arrHigh, arrLow, arrClose, arrVol] = request.security_lower_tf(effectiveSymbol, powerLtfSafe, [open, high, low, close, volume], ignore_invalid_timeframe=true, ignore_invalid_symbol=true)
 
 // Calculate buy/sell volume from intrabars
 // Pre-compute method flags outside function for performance (avoid string comparisons in loop)

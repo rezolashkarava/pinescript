@@ -18,7 +18,8 @@ indicator("Regime-Aware Institutional VWAP",
 //
 // METHODOLOGY:
 // • VWAP: Volume-Weighted Average Price (cumulative from anchor)
-// • CVD Proxy: Chaikin Money Flow Multiplier × Volume
+// • CVD: Intrabar polarity (close >= open = buy, else sell) via lower TF
+//        Falls back to Chaikin CLV when no intrabar data available
 // • Z-Score: (Price - VWAP) / σ, clamped to ±5
 //
 // REGIME STATES:
@@ -33,9 +34,9 @@ indicator("Regime-Aware Institutional VWAP",
 // INPUTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-string GRP_CORE = "Core Settings"
-string GRP_MODE = "Mode"
-string GRP_VISUAL = "Visual"
+string GRP_CORE = "⚙️ Core Settings"
+string GRP_MODE = "📊 Mode"
+string GRP_VISUAL = "🎨 Visual"
 
 // Core
 i_anchor = input.string("Session", "Anchor Method", 
@@ -76,23 +77,7 @@ i_neut = input.color(#78909C, "Neutral", group = GRP_VISUAL, inline = "c2")
 // TIMEFRAME SCALING
 // ─────────────────────────────────────────────────────────────────────────────
 
-f_tfMinutes() =>
-    switch timeframe.period
-        "1" => 1
-        "3" => 3
-        "5" => 5
-        "15" => 15
-        "30" => 30
-        "45" => 45
-        "60" => 60
-        "120" => 120
-        "180" => 180
-        "240" => 240
-        "D" => 1440
-        "W" => 10080
-        => na(str.tonumber(timeframe.period)) ? 60 : str.tonumber(timeframe.period)
-
-float tfMinutes = f_tfMinutes()
+int tfMinutes = timeframe.in_seconds() / 60
 float tfScale = i_autoMode ? math.max(0.5, math.min(3.0, math.sqrt(tfMinutes / 5.0))) : 1.0
 
 int pivotLen = int(math.round(i_pivotLenBase * tfScale))
@@ -142,12 +127,31 @@ float variance = sumV > 0 ? math.max(sumPV2 / sumV - vwapVal * vwapVal, 0) : 0
 float stdev = math.sqrt(variance)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CVD CALCULATION (Chaikin Money Flow Method)
+// CVD CALCULATION (Intrabar Polarity — more accurate than Chaikin for gaps)
+// Falls back to Chaikin CLV when no intrabar data is available (e.g., 1m chart)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Intrabar lower timeframe: use 1m for most TFs, scale up for daily+
+string cvdLtf = tfMinutes >= 1440 ? "15" : tfMinutes >= 60 ? "1" : "1"
+
+// Fetch intrabar OHLCV
+[ltfOpen, ltfClose, ltfVol] = request.security_lower_tf(syminfo.tickerid, cvdLtf, [open, close, volume])
+
+// Sum intrabar delta: close >= open = buy volume, else sell volume
+float intrabarDelta = 0.0
+int ltfSize = array.size(ltfOpen)
+if ltfSize > 0
+    for i = 0 to ltfSize - 1
+        float iClose = array.get(ltfClose, i)
+        float iOpen  = array.get(ltfOpen, i)
+        float iVol   = array.get(ltfVol, i)
+        intrabarDelta += iClose >= iOpen ? iVol : -iVol
+
+// Fallback: Chaikin CLV when no intrabar data (same TF or 1m chart)
 float rangeHL = high - low
-float mfMultiplier = rangeHL > 0 ? ((close - low) - (high - close)) / rangeHL : 0.0
-float delta = mfMultiplier * volume
+float chaikinDelta = rangeHL > 0 ? ((close - low) - (high - close)) / rangeHL * volume : 0.0
+
+float delta = ltfSize > 0 ? intrabarDelta : chaikinDelta
 
 var float cvd = 0.0
 if doReset
@@ -156,7 +160,7 @@ else
     cvd += delta
 
 float cvdEMA = ta.ema(cvd, i_cvdSmoothLen)
-max_bars_back(cvdEMA, 100)
+max_bars_back(cvdEMA, 200)
 float cvdMomentum = cvdEMA - cvdEMA[cvdLen]
 
 // ─────────────────────────────────────────────────────────────────────────────
