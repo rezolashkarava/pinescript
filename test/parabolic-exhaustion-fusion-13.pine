@@ -1,0 +1,788 @@
+//@version=6
+indicator("Parabolic Exhaustion Fusion 13 [Paganie] v1.1.1", shorttitle="PE-F13", overlay=true, max_labels_count=500)
+
+// ============================================================================
+// PARABOLIC EXHAUSTION FUSION 13 v1.1.1 — SCORING RECALIBRATION
+// Professional-grade parabolic exhaustion detection using 13 quantitative
+// methods across 4 tiers (Structural, Momentum, Volume/Flow, Microstructure).
+// Designed for crypto altcoins. Works on any asset/timeframe.
+//
+// V1.1.1 - Scoring Recalibration:
+// • Composite normalized against DIRECTIONAL weights only (not all 12)
+// • Amplifiers add bonus on top (up to +40%), not diluted in denominator
+// • Intensity scaling boosted — Jerk ×1.5, Kurtosis /3, CVD starts at 1.0
+// • Thresholds recalibrated: minScore 35, mid 50, strong 65, elite 80
+// • Temporal boost raised to +20%
+//
+// V1.1 - False Signal Elimination:
+// • Non-directional methods (ATR, BBW, GK, RV, Hurst, Temporal) now AMPLIFY
+//   only — they cannot activate tiers or generate signals alone
+// • Temporal vulnerability becomes post-multiplier, not standalone signal
+// • Minimum 2 directional methods required for any signal
+// • Graduated climax and CVD intensities (decay-based, not binary)
+// • TF-adaptive cooldown (scalp 20, intra 12, swing 8, position 5)
+// • Dashboard shows directional method count
+//
+// V1.0 - Initial Release:
+// Tier A (Structural):  Log-Regression Deviation, Hurst Exponent, RV Term Structure
+// Tier B (Momentum):    Jerk, Kurtosis+Skewness, ATR Acceleration, BBW Acceleration
+// Tier C (Volume/Flow): CVD Divergence, Buying Climax, Absorption, Garman-Klass Vol
+// Tier D (Micro):       Wick Degradation, Temporal Vulnerability
+// ============================================================================
+
+max_bars_back(close, 1500)
+max_bars_back(high, 1500)
+max_bars_back(low, 1500)
+max_bars_back(open, 1500)
+max_bars_back(volume, 1500)
+
+// ============================================================================
+// CONSTANTS & HELPERS
+// ============================================================================
+
+int DIR_BULL =  1
+int DIR_BEAR = -1
+
+round2(float x) => na(x) ? na : math.round(x * 100) / 100
+round1(float x) => na(x) ? na : math.round(x * 10) / 10
+safeDivide(float num, float denom) => na(num) or na(denom) or denom == 0 ? na : num / denom
+strengthSymbol(int level) => level >= 4 ? "★" : level >= 3 ? "◆" : level >= 2 ? "◇" : "○"
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+string GRP_MODE  = "⚙️ Mode"
+string GRP_STRUCT = "📐 Structural (Tier A)"
+string GRP_MOM   = "🔄 Momentum (Tier B)"
+string GRP_FLOW  = "📊 Volume & Flow (Tier C)"
+string GRP_MICRO = "🔬 Microstructure (Tier D)"
+string GRP_SIG   = "🎯 Signal"
+string GRP_VIS   = "🎨 Visuals"
+string GRP_ALERT = "🔔 Alerts"
+
+// Mode
+string settingsMode  = input.string("Auto", "Settings Mode", options=["Auto", "Manual"], group=GRP_MODE, tooltip="Auto adapts all parameters to timeframe")
+string signalTiming  = input.string("Confirmed", "Signal Timing", options=["Confirmed", "Realtime"], group=GRP_MODE, tooltip="Confirmed = bar close only. Realtime = intrabar")
+int    cooldownBars  = input.int(8, "Cooldown (bars)", minval=0, maxval=100, group=GRP_MODE, tooltip="Min bars between signals (Auto mode overrides with TF-adaptive)")
+
+// Structural
+int    logRegLenIn   = input.int(100, "Log-Regression Lookback", minval=30, maxval=300, group=GRP_STRUCT, tooltip="Window for log-price linear regression")
+float  logRegZIn     = input.float(2.5, "Log-Reg Z Threshold", minval=1.5, maxval=4.0, step=0.1, group=GRP_STRUCT, tooltip="Z-deviation for super-exponential detection")
+int    hurstLenIn    = input.int(100, "Hurst R/S Window", minval=50, maxval=200, group=GRP_STRUCT, tooltip="Rolling window for Hurst exponent")
+float  hurstDropIn   = input.float(0.10, "Hurst Drop Threshold", minval=0.05, maxval=0.25, step=0.01, group=GRP_STRUCT, tooltip="Min Hurst drop for regime shift signal")
+float  rvRatioIn     = input.float(1.5, "RV Term Struct Threshold", minval=1.1, maxval=3.0, step=0.1, group=GRP_STRUCT, tooltip="rv5/rv20 ratio above this = inversion")
+
+// Momentum
+int    jerkPeriodIn  = input.int(3, "Jerk Velocity Period", minval=1, maxval=15, group=GRP_MOM, tooltip="Price velocity lookback for jerk calculation")
+int    kurtLenIn     = input.int(30, "Kurtosis/Skewness Window", minval=15, maxval=60, group=GRP_MOM, tooltip="Rolling window for distribution moments")
+float  kurtZIn       = input.float(2.0, "Kurtosis Z Threshold", minval=1.0, maxval=4.0, step=0.1, group=GRP_MOM, tooltip="Kurtosis z-score above this = fat tails")
+int    bbLenIn       = input.int(20, "Bollinger Band Length", minval=10, maxval=50, group=GRP_MOM, tooltip="BB length for BBW acceleration")
+
+// Volume & Flow
+int    cvdPivotIn    = input.int(5, "CVD Pivot Length", minval=2, maxval=20, group=GRP_FLOW, tooltip="Pivot lookback for CVD divergence")
+int    climaxVolIn   = input.int(60, "Climax Volume Lookback", minval=20, maxval=200, group=GRP_FLOW, tooltip="Bars to check for highest volume climax")
+int    climaxRangeIn = input.int(20, "Climax Range Lookback", minval=10, maxval=60, group=GRP_FLOW, tooltip="Bars to check for widest range climax")
+float  absEffortIn   = input.float(2.5, "Absorption Effort Min", minval=1.2, maxval=5.0, step=0.1, group=GRP_FLOW, tooltip="Min volume/avgVolume ratio for absorption")
+float  absResultIn   = input.float(0.5, "Absorption Result Max", minval=0.1, maxval=1.0, step=0.1, group=GRP_FLOW, tooltip="Max range/ATR ratio for absorption")
+
+// Microstructure
+float  wickThreshIn  = input.float(0.30, "Wick Rejection Threshold", minval=0.15, maxval=0.60, step=0.01, group=GRP_MICRO, tooltip="Min wick % of range for rejection")
+int    wickConsecIn  = input.int(3, "Consecutive Rejection Wicks", minval=2, maxval=6, group=GRP_MICRO, tooltip="Consecutive wicks for degradation signal")
+bool   useTemporalIn = input.bool(true, "Temporal Vulnerability", group=GRP_MICRO, tooltip="Enable funding/liquidity time windows (+15% score boost when active)")
+
+// Signal — v1.1.1 recalibrated thresholds
+int    minScoreIn    = input.int(35, "Min Composite Score", minval=0, maxval=80, group=GRP_SIG, tooltip="Minimum score to generate any signal")
+int    minTiersIn    = input.int(2, "Min Active Tiers", minval=1, maxval=4, group=GRP_SIG, tooltip="Minimum tiers converging for signal")
+int    eliteScoreIn  = input.int(80, "Elite (★) Threshold", minval=50, maxval=100, group=GRP_SIG)
+int    strongScoreIn = input.int(65, "Strong (◆) Threshold", minval=40, maxval=90, group=GRP_SIG)
+int    midScoreIn    = input.int(50, "Mid (◇) Threshold", minval=25, maxval=75, group=GRP_SIG)
+
+// Visuals
+bool   showDash      = input.bool(true, "Show Dashboard", group=GRP_VIS)
+string dashPos       = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GRP_VIS)
+string dashSizeIn    = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=GRP_VIS)
+color  eliteColIn    = input.color(#FFD700, "Elite Color", group=GRP_VIS)
+color  strongColIn   = input.color(#00E676, "Strong Color", group=GRP_VIS)
+color  midColIn      = input.color(#42A5F5, "Mid Color", group=GRP_VIS)
+color  weakColIn     = input.color(#B0B0B0, "Weak Color", group=GRP_VIS)
+
+// Alerts
+bool   alertElite    = input.bool(true, "Alert Elite (★)", group=GRP_ALERT)
+bool   alertStrong   = input.bool(true, "Alert Strong (◆)", group=GRP_ALERT)
+bool   alertMid      = input.bool(false, "Alert Mid (◇)", group=GRP_ALERT)
+bool   alertWeak     = input.bool(false, "Alert Weak (○)", group=GRP_ALERT)
+
+// ============================================================================
+// TIMEFRAME DETECTION & AUTO MODE
+// ============================================================================
+
+int tfMinutes = timeframe.in_seconds() / 60
+bool isScalp    = tfMinutes <= 5
+bool isIntra    = tfMinutes > 5 and tfMinutes <= 60
+bool isSwing    = tfMinutes > 60 and tfMinutes <= 1440
+bool isPosition = tfMinutes > 1440
+string tfCat    = isScalp ? "Scalp" : isIntra ? "Intra" : isSwing ? "Swing" : "Position"
+bool effAuto    = settingsMode == "Auto"
+
+// Auto-mode adaptive scale (1.0 at 15m, lower for scalp, higher for swing+)
+float tfScale = math.max(0.5, math.min(4.0, math.sqrt(tfMinutes / 15.0)))
+
+// Effective parameters
+int   effLogRegLen  = effAuto ? int(math.max(40, math.min(200, math.round(80 * tfScale)))) : logRegLenIn
+float effLogRegZ    = effAuto ? (isScalp ? 2.0 : 2.5) : logRegZIn
+int   effHurstLen   = effAuto ? int(math.max(60, math.min(150, math.round(100 * tfScale)))) : hurstLenIn
+float effHurstDrop  = effAuto ? hurstDropIn : hurstDropIn
+float effRvRatio    = effAuto ? rvRatioIn : rvRatioIn
+int   effJerkPeriod = effAuto ? int(math.max(2, math.min(10, math.round(3 * tfScale)))) : jerkPeriodIn
+int   effKurtLen    = effAuto ? int(math.max(15, math.min(50, math.round(25 * tfScale)))) : kurtLenIn
+int   effBBLen      = effAuto ? int(math.max(14, math.min(40, math.round(20 * tfScale)))) : bbLenIn
+int   effCvdPivot   = effAuto ? int(math.max(3, math.min(15, math.round(5 * tfScale)))) : cvdPivotIn
+int   effClimaxVol  = effAuto ? int(math.max(30, math.min(120, math.round(50 * tfScale)))) : climaxVolIn
+int   effClimaxRng  = effAuto ? int(math.max(10, math.min(40, math.round(15 * tfScale)))) : climaxRangeIn
+
+// Fix 5: TF-adaptive cooldown
+int effCooldown = effAuto ? (isScalp ? 20 : isIntra ? 12 : isSwing ? 8 : 5) : cooldownBars
+
+// TF-adaptive weights [Scalp, Intra, Swing, Position]
+float w1  = isScalp ? 5  : isIntra ? 8  : isSwing ? 12 : 14   // Log-Reg
+float w2  = isScalp ? 4  : isIntra ? 7  : isSwing ? 11 : 13   // Hurst
+float w3  = isScalp ? 5  : isIntra ? 7  : isSwing ? 10 : 12   // RV Term
+float w4  = isScalp ? 10 : isIntra ? 8  : isSwing ? 6  : 4    // Jerk
+float w5  = isScalp ? 7  : isIntra ? 8  : isSwing ? 8  : 7    // Kurt/Skew
+float w6  = isScalp ? 8  : isIntra ? 8  : isSwing ? 7  : 6    // ATR Accel
+float w7  = isScalp ? 7  : isIntra ? 7  : isSwing ? 7  : 6    // BBW Accel
+float w8  = isScalp ? 10 : isIntra ? 10 : isSwing ? 8  : 7    // CVD Div
+float w9  = isScalp ? 8  : isIntra ? 9  : isSwing ? 8  : 7    // Climax
+float w10 = isScalp ? 9  : isIntra ? 8  : isSwing ? 7  : 6    // Absorption
+float w11 = isScalp ? 7  : isIntra ? 7  : isSwing ? 7  : 7    // GK Vol
+float w12 = isScalp ? 10 : isIntra ? 8  : isSwing ? 5  : 4    // Wick Deg
+float w13 = isScalp ? 10 : isIntra ? 8  : isSwing ? 4  : 3    // Temporal
+float wTotal = w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9 + w10 + w11 + w12 + w13
+
+// ============================================================================
+// SHARED PRE-COMPUTATIONS
+// ============================================================================
+
+float atr        = ta.atr(14)
+float ema20      = ta.ema(close, 20)
+float volSma20   = ta.sma(volume, 20)
+float candleRng  = high - low
+float bodySize   = math.abs(close - open)
+float upperWick  = high - math.max(close, open)
+float lowerWick  = math.min(close, open) - low
+float closeLoc   = candleRng > 0 ? (close - low) / candleRng : 0.5
+float logReturn  = close[1] > 0 ? math.log(close / close[1]) : 0.0
+bool  isUptrend  = close > ema20
+bool  isDntrend  = close < ema20
+
+// ============================================================================
+// METHOD 6: JERK (3rd Derivative) — Tier B [DIRECTIONAL]
+// ============================================================================
+
+float velocity6     = close - close[effJerkPeriod]
+float acceleration6 = velocity6 - nz(velocity6[1])
+float jerk6         = acceleration6 - nz(acceleration6[1])
+
+bool jerkExhBear = velocity6 > 0 and jerk6 < 0 and jerk6 < nz(jerk6[1])
+bool jerkExhBull = velocity6 < 0 and jerk6 > 0 and jerk6 > nz(jerk6[1])
+float jerkIntBear = jerkExhBear ? math.min(1.0, math.abs(jerk6) / (atr * 0.6 + 0.0001)) : 0.0
+float jerkIntBull = jerkExhBull ? math.min(1.0, math.abs(jerk6) / (atr * 0.6 + 0.0001)) : 0.0
+
+// ============================================================================
+// METHOD 8: ATR ACCELERATION — Tier B [NON-DIRECTIONAL → AMPLIFIER ONLY]
+// ============================================================================
+
+float atrRoc8     = atr - nz(atr[5])
+float atrAccel8   = atrRoc8 - nz(atrRoc8[1])
+float atrPctRank8 = ta.percentrank(atr, 100)
+
+bool atrExhaustion = atrPctRank8 >= 90 and atrAccel8 < 0
+float atrExhInt    = atrExhaustion ? math.min(1.0, atrPctRank8 / 100.0) : 0.0
+
+// ============================================================================
+// METHOD 9: EFFORT vs RESULT (Absorption) — Tier C [DIRECTIONAL]
+// ============================================================================
+
+float effort9  = safeDivide(volume, volSma20)
+float result9  = safeDivide(candleRng, atr)
+bool  absorb9  = not na(effort9) and not na(result9) and effort9 > absEffortIn and result9 < absResultIn
+
+// Directional: absorption during uptrend = bearish, during downtrend = bullish
+bool absorbBear = absorb9 and isUptrend
+bool absorbBull = absorb9 and isDntrend
+float absorbIntBear = absorbBear ? math.min(1.0, effort9 / 3.5) : 0.0
+float absorbIntBull = absorbBull ? math.min(1.0, effort9 / 3.5) : 0.0
+
+// ============================================================================
+// METHOD 3: GARMAN-KLASS VOLATILITY — Tier C [NON-DIRECTIONAL → AMPLIFIER ONLY]
+// ============================================================================
+
+float lnHL3 = candleRng > 0 ? math.log(high / low) : 0.0
+float lnCO3 = open > 0 ? math.log(close / open) : 0.0
+float gkBar = 0.5 * lnHL3 * lnHL3 - 0.3863 * lnCO3 * lnCO3
+
+float gkRolling  = ta.sma(gkBar, 5)
+float gkBaseline = ta.sma(gkBar, 50)
+float gkPctRank  = ta.percentrank(gkRolling, 200)
+bool  gkExh      = gkPctRank > 95
+
+// Parkinson/close-close asymmetry for blow-off detection
+float parkBar    = candleRng > 0 ? lnHL3 * lnHL3 / (4.0 * math.log(2)) : 0.0
+float ccBar      = lnCO3 * lnCO3
+float parkSma    = ta.sma(parkBar, 10)
+float ccSma      = ta.sma(ccBar, 10)
+float asymRatio3 = safeDivide(parkSma, ccSma)
+bool  gkAsym     = not na(asymRatio3) and asymRatio3 > 1.5
+
+float gkInt = gkExh ? math.min(1.0, gkPctRank / 100.0) : 0.0
+
+// ============================================================================
+// METHOD 7: RV TERM STRUCTURE — Tier A [NON-DIRECTIONAL → AMPLIFIER ONLY]
+// ============================================================================
+
+float rv5  = ta.stdev(logReturn, 5)
+float rv20 = ta.stdev(logReturn, 20)
+float rvRatio7 = safeDivide(rv5, rv20)
+
+bool  rvInversion = not na(rvRatio7) and rvRatio7 > effRvRatio
+bool  rvExtreme   = not na(rvRatio7) and rvRatio7 > effRvRatio * 1.33
+float rvInt       = rvInversion ? math.min(1.0, (rvRatio7 - 1.0) / 1.5) : 0.0
+
+// ============================================================================
+// METHOD 11: BBW ACCELERATION — Tier B [NON-DIRECTIONAL → AMPLIFIER ONLY]
+// ============================================================================
+
+float bbBasis  = ta.sma(close, effBBLen)
+float bbDev11  = ta.stdev(close, effBBLen)
+float bbw11    = bbBasis > 0 ? (bbDev11 * 2) / bbBasis * 100 : 0.0
+float bbwRoc   = bbw11 - nz(bbw11[1])
+float bbwAccel = bbwRoc - nz(bbwRoc[1])
+float bbwPctRk = ta.percentrank(bbw11, math.min(500, math.max(50, effBBLen * 5)))
+
+bool  bbwExh   = bbwPctRk > 90 and bbwAccel < 0
+float bbwInt   = bbwExh ? math.min(1.0, bbwPctRk / 100.0) : 0.0
+
+// ============================================================================
+// METHOD 4: BUYING/SELLING CLIMAX (Wyckoff) — Tier C [DIRECTIONAL]
+// Fix 6: Graduated climax intensity (not binary)
+// ============================================================================
+
+bool highestVol4  = volume >= ta.highest(volume, effClimaxVol)
+bool widestRng4   = candleRng >= ta.highest(candleRng, effClimaxRng)
+
+int impulseUp4 = 0
+int impulseDn4 = 0
+for i = 1 to 5
+    impulseUp4 += nz(close[i]) > nz(close[i + 1]) ? 1 : 0
+    impulseDn4 += nz(close[i]) < nz(close[i + 1]) ? 1 : 0
+
+bool buyClimax4  = highestVol4 and widestRng4 and closeLoc < 0.5 and impulseUp4 >= 4
+bool sellClimax4 = highestVol4 and widestRng4 and closeLoc > 0.5 and impulseDn4 >= 4
+
+// Fix 6: Graduated climax — how extreme is the climax?
+float volExcess4 = safeDivide(volume, ta.highest(volume, effClimaxVol))
+float rngExcess4 = safeDivide(candleRng, ta.highest(candleRng, effClimaxRng))
+float climaxIntBear = buyClimax4  ? math.min(1.0, (nz(volExcess4, 0.5) + nz(rngExcess4, 0.5) + (1.0 - closeLoc)) / 3.0) :
+                      (highestVol4 and closeLoc < 0.4 and impulseUp4 >= 3) ? 0.4 : 0.0
+float climaxIntBull = sellClimax4 ? math.min(1.0, (nz(volExcess4, 0.5) + nz(rngExcess4, 0.5) + closeLoc) / 3.0) :
+                      (highestVol4 and closeLoc > 0.6 and impulseDn4 >= 3) ? 0.4 : 0.0
+
+// ============================================================================
+// METHOD 5: WICK DEGRADATION — Tier D [DIRECTIONAL]
+// ============================================================================
+
+float uwPct5 = candleRng > 0 ? upperWick / candleRng : 0.0
+float lwPct5 = candleRng > 0 ? lowerWick / candleRng : 0.0
+
+// Body-to-wick ratio slope via linreg
+float bwRatio5   = bodySize / (upperWick + lowerWick + 0.0001)
+float bwRegNow   = ta.linreg(bwRatio5, 10, 0)
+float bwRegPrev  = ta.linreg(bwRatio5, 10, 9)
+float bwSlope5   = bwRegNow - bwRegPrev
+
+// Consecutive rejection wicks (upper)
+int rejUp5 = 0
+for i = 0 to wickConsecIn - 1
+    float r = nz(high[i]) - nz(low[i])
+    rejUp5 += (r > 0 and (nz(high[i]) - math.max(nz(close[i]), nz(open[i]))) / r > wickThreshIn) ? 1 : 0
+
+// Consecutive rejection wicks (lower)
+int rejDn5 = 0
+for i = 0 to wickConsecIn - 1
+    float r = nz(high[i]) - nz(low[i])
+    rejDn5 += (r > 0 and (math.min(nz(close[i]), nz(open[i])) - nz(low[i])) / r > wickThreshIn) ? 1 : 0
+
+bool wickDegBear = isUptrend and (bwSlope5 < -0.1 or rejUp5 >= wickConsecIn)
+bool wickDegBull = isDntrend and (bwSlope5 < -0.1 or rejDn5 >= wickConsecIn)
+float wickIntBear = wickDegBear ? math.min(1.0, rejUp5 >= wickConsecIn ? 1.0 : math.abs(bwSlope5) * 2.0) : 0.0
+float wickIntBull = wickDegBull ? math.min(1.0, rejDn5 >= wickConsecIn ? 1.0 : math.abs(bwSlope5) * 2.0) : 0.0
+
+// ============================================================================
+// METHOD 2: CVD DIVERGENCE — Tier C [DIRECTIONAL]
+// Fix 6: Graduated CVD intensity (decay from detection bar)
+// ============================================================================
+
+float clv2     = candleRng > 0 ? ((close - low) - (high - close)) / candleRng : 0.0
+float barDelta = clv2 * volume
+var float cvd2 = 0.0
+cvd2 += barDelta
+max_bars_back(cvd2, 500)
+
+// Pivot-based divergence on swing highs/lows
+float pricePH2 = ta.pivothigh(high, effCvdPivot, effCvdPivot)
+float pricePL2 = ta.pivotlow(low, effCvdPivot, effCvdPivot)
+float cvdPH2   = ta.pivothigh(cvd2, effCvdPivot, effCvdPivot)
+float cvdPL2   = ta.pivotlow(cvd2, effCvdPivot, effCvdPivot)
+
+var float prevPricePH = na
+var float prevCvdPH   = na
+var float prevPricePL = na
+var float prevCvdPL   = na
+
+bool cvdBearDiv = false
+bool cvdBullDiv = false
+
+if not na(pricePH2) and not na(cvdPH2)
+    if not na(prevPricePH) and not na(prevCvdPH)
+        cvdBearDiv := pricePH2 > prevPricePH and cvdPH2 < prevCvdPH
+    prevPricePH := pricePH2
+    prevCvdPH   := cvdPH2
+
+if not na(pricePL2) and not na(cvdPL2)
+    if not na(prevPricePL) and not na(prevCvdPL)
+        cvdBullDiv := pricePL2 < prevPricePL and cvdPL2 > prevCvdPL
+    prevPricePL := pricePL2
+    prevCvdPL   := cvdPL2
+
+// Persist divergence for a few bars after detection (pivots lag)
+var int cvdBearDivBar = na
+var int cvdBullDivBar = na
+if cvdBearDiv
+    cvdBearDivBar := bar_index
+if cvdBullDiv
+    cvdBullDivBar := bar_index
+
+bool cvdBearActive = not na(cvdBearDivBar) and bar_index - cvdBearDivBar <= effCvdPivot * 2
+bool cvdBullActive = not na(cvdBullDivBar) and bar_index - cvdBullDivBar <= effCvdPivot * 2
+
+// Fix 6: CVD intensity decays from detection bar — starts at 1.0, floor 0.3
+float cvdDecayBear = not na(cvdBearDivBar) ? math.max(0.3, 1.0 - float(bar_index - cvdBearDivBar) / float(effCvdPivot * 3)) : 0.0
+float cvdDecayBull = not na(cvdBullDivBar) ? math.max(0.3, 1.0 - float(bar_index - cvdBullDivBar) / float(effCvdPivot * 3)) : 0.0
+float cvdIntBear = cvdBearActive ? cvdDecayBear : 0.0
+float cvdIntBull = cvdBullActive ? cvdDecayBull : 0.0
+
+// ============================================================================
+// METHOD 13: TEMPORAL VULNERABILITY — Tier D [NON-DIRECTIONAL → POST-MULTIPLIER]
+// Fix 3: No longer activates tiers or contributes to composite sum.
+//        Instead applies +15% post-multiplier to composite when active.
+// ============================================================================
+
+int utcH = hour(time, "UTC")
+int utcM = minute(time, "UTC")
+int utcDow = dayofweek(time, "UTC")
+
+bool nearFund00 = (utcH == 23 and utcM >= 30) or (utcH == 0 and utcM <= 30)
+bool nearFund08 = (utcH == 7 and utcM >= 30) or (utcH == 8 and utcM <= 30)
+bool nearFund16 = (utcH == 15 and utcM >= 30) or (utcH == 16 and utcM <= 30)
+bool inFundingWin = useTemporalIn and (nearFund00 or nearFund08 or nearFund16)
+bool inLiqTrough  = useTemporalIn and (utcH == 21 or utcH == 22)
+bool isMondayMin  = useTemporalIn and utcDow == dayofweek.monday and utcH == 21
+bool isWeekend    = useTemporalIn and (utcDow == dayofweek.saturday or utcDow == dayofweek.sunday)
+
+float tempScore13 = (inFundingWin ? 0.35 : 0.0) + (inLiqTrough ? 0.25 : 0.0) + (isMondayMin ? 0.2 : 0.0) + (isWeekend ? 0.2 : 0.0)
+bool  tempVuln    = tempScore13 >= 0.25
+
+// Fix 3: Temporal boost as post-multiplier (not composite contributor)
+float temporalBoost = tempVuln ? 1.20 : 1.0
+
+// ============================================================================
+// METHOD 1: LOG-REGRESSION DEVIATION — Tier A [DIRECTIONAL]
+// ============================================================================
+
+float logRegZ1 = 0.0
+if bar_index >= effLogRegLen
+    float sumX = 0.0
+    float sumY = 0.0
+    float sumXY = 0.0
+    float sumX2 = 0.0
+    float n = effLogRegLen
+    for i = 0 to effLogRegLen - 1
+        float x = float(i)
+        float y = math.log(nz(close[i], close))
+        sumX  += x
+        sumY  += y
+        sumXY += x * y
+        sumX2 += x * x
+    float denom = n * sumX2 - sumX * sumX
+    if denom != 0
+        float slope1 = (n * sumXY - sumX * sumY) / denom
+        float intercept1 = (sumY - slope1 * sumX) / n
+        float predicted1 = intercept1
+        float sumR2 = 0.0
+        for i = 0 to effLogRegLen - 1
+            float pred = intercept1 + slope1 * float(i)
+            float resid = math.log(nz(close[i], close)) - pred
+            sumR2 += resid * resid
+        float residStd = math.sqrt(sumR2 / n)
+        logRegZ1 := residStd > 0 ? (math.log(close) - predicted1) / residStd : 0.0
+
+bool logRegExhBear = logRegZ1 > effLogRegZ
+bool logRegExtBear = logRegZ1 > effLogRegZ + 0.5
+bool logRegExhBull = logRegZ1 < -effLogRegZ
+bool logRegExtBull = logRegZ1 < -(effLogRegZ + 0.5)
+float logRegIntBear = logRegExhBear ? math.min(1.0, (logRegZ1 - effLogRegZ + 0.8) / 1.2) : 0.0
+float logRegIntBull = logRegExhBull ? math.min(1.0, (math.abs(logRegZ1) - effLogRegZ + 0.8) / 1.2) : 0.0
+
+// ============================================================================
+// METHOD 10: HURST EXPONENT (Simplified R/S) — Tier A [NON-DIRECTIONAL → AMPLIFIER ONLY]
+// ============================================================================
+
+float hurstVal = 0.5
+if bar_index >= effHurstLen + 1
+    float meanRet = 0.0
+    for i = 0 to effHurstLen - 1
+        meanRet += nz(close[i]) > 0 and nz(close[i + 1]) > 0 ? math.log(nz(close[i]) / nz(close[i + 1])) : 0.0
+    meanRet /= effHurstLen
+
+    float cumDev = 0.0
+    float maxDev = -1e10
+    float minDev = 1e10
+    float sumSq  = 0.0
+    for i = 0 to effHurstLen - 1
+        float ret = (nz(close[i]) > 0 and nz(close[i + 1]) > 0 ? math.log(nz(close[i]) / nz(close[i + 1])) : 0.0) - meanRet
+        cumDev += ret
+        maxDev := math.max(maxDev, cumDev)
+        minDev := math.min(minDev, cumDev)
+        sumSq  += ret * ret
+
+    float R = maxDev - minDev
+    float S = math.sqrt(sumSq / effHurstLen)
+    float RS = S > 0 ? R / S : 0
+    hurstVal := RS > 1 ? math.log(RS) / math.log(float(effHurstLen)) : 0.5
+
+float hurstSmooth = ta.sma(hurstVal, 5)
+float hurstPrev10 = nz(hurstSmooth[10])
+bool  hurstDrop   = hurstPrev10 > 0.6 and hurstSmooth < hurstPrev10 - effHurstDrop
+float hurstInt    = hurstDrop ? math.min(1.0, (hurstPrev10 - hurstSmooth) / 0.2) : 0.0
+
+// ============================================================================
+// METHOD 12: ROLLING KURTOSIS + SKEWNESS — Tier B [DIRECTIONAL]
+// ============================================================================
+
+float kMean12 = 0.0
+for i = 0 to effKurtLen - 1
+    kMean12 += nz(close[i]) > 0 and nz(close[i + 1]) > 0 ? math.log(nz(close[i]) / nz(close[i + 1])) : 0.0
+float kN = float(effKurtLen)
+kMean12 /= kN
+
+float m2_12 = 0.0
+float m3_12 = 0.0
+float m4_12 = 0.0
+for i = 0 to effKurtLen - 1
+    float ret = (nz(close[i]) > 0 and nz(close[i + 1]) > 0 ? math.log(nz(close[i]) / nz(close[i + 1])) : 0.0) - kMean12
+    float d2 = ret * ret
+    m2_12 += d2
+    m3_12 += d2 * ret
+    m4_12 += d2 * d2
+m2_12 /= kN
+m3_12 /= kN
+m4_12 /= kN
+
+float skewness12 = m2_12 > 0 ? m3_12 / math.pow(m2_12, 1.5) : 0.0
+float kurtosis12 = m2_12 > 0 ? m4_12 / (m2_12 * m2_12) - 3.0 : 0.0
+
+float kurtMaSma  = ta.sma(kurtosis12, 50)
+float kurtStd    = ta.stdev(kurtosis12, 50)
+float kurtZ12    = kurtStd > 0 ? (kurtosis12 - kurtMaSma) / kurtStd : 0.0
+
+float prevSkew = nz(skewness12[1])
+bool  skewFlipNeg = prevSkew > 0 and skewness12 <= 0
+bool  skewFlipPos = prevSkew < 0 and skewness12 >= 0
+
+bool  kurtExhBear = kurtZ12 > kurtZIn and skewFlipNeg
+bool  kurtExhBull = kurtZ12 > kurtZIn and skewFlipPos
+float kurtIntBear = kurtExhBear ? math.min(1.0, kurtZ12 / 3.0) : 0.0
+float kurtIntBull = kurtExhBull ? math.min(1.0, kurtZ12 / 3.0) : 0.0
+
+// ============================================================================
+// DIRECTIONAL EVIDENCE GATE (Fix 1)
+// Non-directional methods only amplify when directional evidence exists
+// ============================================================================
+
+// 7 directional methods per direction
+bool hasBearEvidence = logRegExhBear or jerkExhBear or kurtExhBear or cvdBearActive or buyClimax4 or absorbBear or wickDegBear
+bool hasBullEvidence = logRegExhBull or jerkExhBull or kurtExhBull or cvdBullActive or sellClimax4 or absorbBull or wickDegBull
+
+// Gate non-directional intensities: zero when no directional evidence
+float gatedAtrBearInt  = hasBearEvidence ? atrExhInt : 0.0
+float gatedAtrBullInt  = hasBullEvidence ? atrExhInt : 0.0
+float gatedBbwBearInt  = hasBearEvidence ? bbwInt    : 0.0
+float gatedBbwBullInt  = hasBullEvidence ? bbwInt    : 0.0
+float gatedGkBearInt   = hasBearEvidence ? gkInt     : 0.0
+float gatedGkBullInt   = hasBullEvidence ? gkInt     : 0.0
+float gatedRvBearInt   = hasBearEvidence ? rvInt     : 0.0
+float gatedRvBullInt   = hasBullEvidence ? rvInt     : 0.0
+float gatedHurstBearInt = hasBearEvidence ? hurstInt : 0.0
+float gatedHurstBullInt = hasBullEvidence ? hurstInt : 0.0
+
+// Fix 7: Count directional methods active per direction
+int bearDirCount = (logRegExhBear ? 1 : 0) + (jerkExhBear ? 1 : 0) + (kurtExhBear ? 1 : 0) +
+                   (cvdBearActive ? 1 : 0) + (buyClimax4 ? 1 : 0) + (absorbBear ? 1 : 0) + (wickDegBear ? 1 : 0)
+int bullDirCount = (logRegExhBull ? 1 : 0) + (jerkExhBull ? 1 : 0) + (kurtExhBull ? 1 : 0) +
+                   (cvdBullActive ? 1 : 0) + (sellClimax4 ? 1 : 0) + (absorbBull ? 1 : 0) + (wickDegBull ? 1 : 0)
+
+// ============================================================================
+// TIER CLASSIFICATION (Fix 2: Non-directional methods removed from tiers)
+// Only directional methods can activate tiers
+// ============================================================================
+
+// Bear exhaustion (price topped) — DIRECTIONAL ONLY
+bool bearA = logRegExhBear                                      // Only directional
+bool bearB = jerkExhBear or kurtExhBear                         // Only directional
+bool bearC = cvdBearActive or buyClimax4 or absorbBear           // Only directional
+bool bearD = wickDegBear                                         // Only directional
+
+int bearTiers = (bearA ? 1 : 0) + (bearB ? 1 : 0) + (bearC ? 1 : 0) + (bearD ? 1 : 0)
+
+// Bull exhaustion (price bottomed) — DIRECTIONAL ONLY
+bool bullA = logRegExhBull                                       // Only directional
+bool bullB = jerkExhBull or kurtExhBull                          // Only directional
+bool bullC = cvdBullActive or sellClimax4 or absorbBull           // Only directional
+bool bullD = wickDegBull                                         // Only directional
+
+int bullTiers = (bullA ? 1 : 0) + (bullB ? 1 : 0) + (bullC ? 1 : 0) + (bullD ? 1 : 0)
+
+// ============================================================================
+// COMPOSITE SCORING (v1.1.1 Recalibrated)
+// Directional base: normalized against directional weights only (0-100)
+// Amplifier bonus: non-directional adds up to +40% on top
+// Temporal: +20% post-multiplier when active
+// ============================================================================
+
+// Directional-only weight sum (denominator for base score)
+float wDirOnly = w1 + w4 + w5 + w8 + w9 + w10 + w12
+// Amplifier weight sum (for bonus calculation)
+float wAmpOnly = w2 + w3 + w6 + w7 + w11
+
+// Base score from directional methods (0-100 scale)
+float bearBase = wDirOnly > 0 ? (
+     logRegIntBear   * w1 +
+     jerkIntBear     * w4 +
+     kurtIntBear     * w5 +
+     cvdIntBear      * w8 +
+     climaxIntBear   * w9 +
+     absorbIntBear   * w10 +
+     wickIntBear     * w12
+     ) / wDirOnly * 100 : 0.0
+
+float bullBase = wDirOnly > 0 ? (
+     logRegIntBull   * w1 +
+     jerkIntBull     * w4 +
+     kurtIntBull     * w5 +
+     cvdIntBull      * w8 +
+     climaxIntBull   * w9 +
+     absorbIntBull   * w10 +
+     wickIntBull     * w12
+     ) / wDirOnly * 100 : 0.0
+
+// Amplifier bonus from gated non-directional methods (0-40 scale)
+float bearAmpRaw = wAmpOnly > 0 ? (
+     gatedHurstBearInt * w2 +
+     gatedRvBearInt    * w3 +
+     gatedAtrBearInt   * w6 +
+     gatedBbwBearInt   * w7 +
+     gatedGkBearInt    * w11
+     ) / wAmpOnly * 40 : 0.0
+
+float bullAmpRaw = wAmpOnly > 0 ? (
+     gatedHurstBullInt * w2 +
+     gatedRvBullInt    * w3 +
+     gatedAtrBullInt   * w6 +
+     gatedBbwBullInt   * w7 +
+     gatedGkBullInt    * w11
+     ) / wAmpOnly * 40 : 0.0
+
+// Combine: base + amplifier bonus, capped at 100 pre-temporal
+float bearComposite = math.min(100.0, bearBase + bearAmpRaw)
+float bullComposite = math.min(100.0, bullBase + bullAmpRaw)
+
+// Fix 3: Apply temporal post-multiplier (+20%), cap at 100
+bearComposite := math.min(100.0, bearComposite * temporalBoost)
+bullComposite := math.min(100.0, bullComposite * temporalBoost)
+
+// ============================================================================
+// SIGNAL GENERATION
+// ============================================================================
+
+// Confidence levels
+int bearConf = bearComposite >= eliteScoreIn and bearTiers >= 3 ? 4 :
+               bearComposite >= strongScoreIn and bearTiers >= 2 ? 3 :
+               bearComposite >= midScoreIn and bearTiers >= 2 ? 2 :
+               bearComposite >= minScoreIn and bearTiers >= minTiersIn ? 1 : 0
+
+int bullConf = bullComposite >= eliteScoreIn and bullTiers >= 3 ? 4 :
+               bullComposite >= strongScoreIn and bullTiers >= 2 ? 3 :
+               bullComposite >= midScoreIn and bullTiers >= 2 ? 2 :
+               bullComposite >= minScoreIn and bullTiers >= minTiersIn ? 1 : 0
+
+// Timing gate
+bool isConf = signalTiming == "Confirmed" ? barstate.isconfirmed : true
+
+// Fix 5: TF-adaptive cooldown
+var int lastSigBar = 0
+bool cooldownOk = effCooldown == 0 or (bar_index - lastSigBar) >= effCooldown
+
+// Fix 7: Require minimum 2 directional methods for any signal
+bool bearSig = bearConf > 0 and isConf and cooldownOk and bearDirCount >= 2
+bool bullSig = bullConf > 0 and isConf and cooldownOk and bullDirCount >= 2
+
+// Conflict resolution: higher composite wins
+if bearSig and bullSig
+    if bearComposite >= bullComposite
+        bullSig := false
+        bullConf := 0
+    else
+        bearSig := false
+        bearConf := 0
+
+// Edge triggering (anti-spam)
+var int prevBearConf = 0
+var int prevBullConf = 0
+bool bearEdge = bearSig and prevBearConf == 0
+bool bullEdge = bullSig and prevBullConf == 0
+
+if bearEdge or bullEdge
+    lastSigBar := bar_index
+
+prevBearConf := bearSig ? bearConf : 0
+prevBullConf := bullSig ? bullConf : 0
+
+// Active signal for display (on edge only)
+int finalBearConf = bearEdge ? bearConf : 0
+int finalBullConf = bullEdge ? bullConf : 0
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+// Signal colors
+color bearColor = finalBearConf >= 4 ? eliteColIn : finalBearConf >= 3 ? strongColIn : finalBearConf >= 2 ? midColIn : finalBearConf >= 1 ? weakColIn : na
+color bullColor = finalBullConf >= 4 ? eliteColIn : finalBullConf >= 3 ? strongColIn : finalBullConf >= 2 ? midColIn : finalBullConf >= 1 ? weakColIn : na
+
+// Bear exhaustion = short signal = triangle down above bar
+plotshape(finalBearConf >= 4, "Elite Short", shape.triangledown, location.abovebar, eliteColIn, size=size.normal)
+plotshape(finalBearConf == 3, "Strong Short", shape.triangledown, location.abovebar, strongColIn, size=size.small)
+plotshape(finalBearConf == 2, "Mid Short", shape.triangledown, location.abovebar, midColIn, size=size.tiny)
+plotshape(finalBearConf == 1, "Weak Short", shape.triangledown, location.abovebar, weakColIn, size=size.tiny)
+
+// Bull exhaustion = long signal = triangle up below bar
+plotshape(finalBullConf >= 4, "Elite Long", shape.triangleup, location.belowbar, eliteColIn, size=size.normal)
+plotshape(finalBullConf == 3, "Strong Long", shape.triangleup, location.belowbar, strongColIn, size=size.small)
+plotshape(finalBullConf == 2, "Mid Long", shape.triangleup, location.belowbar, midColIn, size=size.tiny)
+plotshape(finalBullConf == 1, "Weak Long", shape.triangleup, location.belowbar, weakColIn, size=size.tiny)
+
+// Score label on signal
+if finalBearConf >= 2
+    label.new(bar_index, high + atr * 0.3, strengthSymbol(finalBearConf) + " " + str.tostring(math.round(bearComposite)), xloc.bar_index, yloc.price, bearColor, label.style_label_down, color.white, size.tiny)
+
+if finalBullConf >= 2
+    label.new(bar_index, low - atr * 0.3, strengthSymbol(finalBullConf) + " " + str.tostring(math.round(bullComposite)), xloc.bar_index, yloc.price, bullColor, label.style_label_up, color.white, size.tiny)
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+
+var string dPos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Right" ? position.bottom_right : position.bottom_left
+var string dSz  = dashSizeIn == "Tiny" ? size.tiny : dashSizeIn == "Normal" ? size.normal : size.small
+var table dash  = showDash ? table.new(dPos, 5, 20, bgcolor=color.new(#1a1a2e, 10), border_color=color.new(#333355, 30), border_width=1) : na
+
+// Dashboard row helper
+dRow(table t, int row, string name, string val, bool active, string pts, color tierCol, string sz) =>
+    table.cell(t, 0, row, name, text_color=tierCol, text_size=sz)
+    table.cell(t, 1, row, val, text_color=color.white, text_size=sz)
+    table.cell(t, 2, row, active ? "●" : "○", text_color=active ? color.new(#00E676, 0) : color.gray, text_size=sz)
+    table.cell(t, 3, row, pts, text_color=color.white, text_size=sz)
+    table.cell(t, 4, row, "", text_size=sz)
+
+dHeader(table t, int row, string name, string sub, bool active, color col, string sz, color bg) =>
+    table.cell(t, 0, row, name, text_color=col, text_size=sz, bgcolor=bg)
+    table.cell(t, 1, row, sub, text_color=col, text_size=sz, bgcolor=bg)
+    table.cell(t, 2, row, active ? "✓" : "✗", text_color=active ? col : color.gray, text_size=sz, bgcolor=bg)
+    table.cell(t, 3, row, "", text_size=sz, bgcolor=bg)
+    table.cell(t, 4, row, "", text_size=sz, bgcolor=bg)
+
+if showDash and barstate.islast
+    color colA = color.new(#64B5F6, 0)
+    color colB = color.new(#FFB74D, 0)
+    color colC = color.new(#81C784, 0)
+    color colD = color.new(#E57373, 0)
+    color hdrBg = color.new(#2a2a4e, 0)
+
+    float dispScore = math.max(bearComposite, bullComposite)
+    int   dispConf  = bearComposite >= bullComposite ? bearConf : bullConf
+    int   dispTiers = bearComposite >= bullComposite ? bearTiers : bullTiers
+    int   dispDirCt = bearComposite >= bullComposite ? bearDirCount : bullDirCount
+    string dispDir  = bearComposite > bullComposite and bearComposite > 10 ? "BEAR" : bullComposite > bearComposite and bullComposite > 10 ? "BULL" : "—"
+    color  dirCol   = dispDir == "BEAR" ? color.new(#FF5252, 0) : dispDir == "BULL" ? color.new(#00E676, 0) : color.gray
+
+    // Header row — v1.1.1
+    table.cell(dash, 0, 0, "PE-F13 v1.1.1", text_color=color.white, text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 1, 0, str.tostring(math.round(dispScore)), text_color=color.white, text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 2, 0, strengthSymbol(dispConf), text_color=dispConf >= 4 ? eliteColIn : dispConf >= 3 ? strongColIn : dispConf >= 2 ? midColIn : weakColIn, text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 3, 0, dispDir, text_color=dirCol, text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 4, 0, tfCat, text_color=color.gray, text_size=dSz, bgcolor=hdrBg)
+
+    // Tier A — DIRECTIONAL ONLY
+    dHeader(dash, 1, "STRUCTURAL", "(A)", bearA or bullA, colA, dSz, color.new(#1a2a4e, 0))
+    dRow(dash, 2, "LogReg",  "z=" + str.tostring(round1(logRegZ1)), logRegExhBear or logRegExhBull, str.tostring(round1(w1)), colA, dSz)
+    dRow(dash, 3, "Hurst*",  "H=" + str.tostring(round2(hurstSmooth)), hurstDrop and hasBearEvidence or hurstDrop and hasBullEvidence, str.tostring(round1(w2)), colA, dSz)
+    dRow(dash, 4, "RV Term*", str.tostring(round2(nz(rvRatio7))) + "x", rvInversion and hasBearEvidence or rvInversion and hasBullEvidence, str.tostring(round1(w3)), colA, dSz)
+
+    // Tier B — DIRECTIONAL ONLY
+    dHeader(dash, 5, "MOMENTUM", "(B)", bearB or bullB, colB, dSz, color.new(#2e2a1a, 0))
+    dRow(dash, 6,  "Jerk",     str.tostring(round2(jerk6)), jerkExhBear or jerkExhBull, str.tostring(round1(w4)), colB, dSz)
+    dRow(dash, 7,  "Kurt/Skw", "z=" + str.tostring(round1(kurtZ12)), kurtExhBear or kurtExhBull, str.tostring(round1(w5)), colB, dSz)
+    dRow(dash, 8,  "ATR Acc*", "p" + str.tostring(math.round(atrPctRank8)), atrExhaustion and hasBearEvidence or atrExhaustion and hasBullEvidence, str.tostring(round1(w6)), colB, dSz)
+    dRow(dash, 9,  "BBW Acc*", "p" + str.tostring(math.round(bbwPctRk)), bbwExh and hasBearEvidence or bbwExh and hasBullEvidence, str.tostring(round1(w7)), colB, dSz)
+
+    // Tier C — DIRECTIONAL ONLY
+    dHeader(dash, 10, "FLOW", "(C)", bearC or bullC, colC, dSz, color.new(#1a2e1a, 0))
+    dRow(dash, 11, "CVD Div",  cvdBearActive ? "Bear" : cvdBullActive ? "Bull" : "—", cvdBearActive or cvdBullActive, str.tostring(round1(w8)), colC, dSz)
+    dRow(dash, 12, "Climax",   buyClimax4 ? "Buy" : sellClimax4 ? "Sell" : "—", buyClimax4 or sellClimax4, str.tostring(round1(w9)), colC, dSz)
+    dRow(dash, 13, "Absorb",   str.tostring(round1(nz(effort9))) + "/" + str.tostring(round1(nz(result9))), absorbBear or absorbBull, str.tostring(round1(w10)), colC, dSz)
+    dRow(dash, 14, "GK Vol*",  "p" + str.tostring(math.round(gkPctRank)), gkExh and hasBearEvidence or gkExh and hasBullEvidence, str.tostring(round1(w11)), colC, dSz)
+
+    // Tier D — DIRECTIONAL ONLY
+    dHeader(dash, 15, "MICRO", "(D)", bearD or bullD, colD, dSz, color.new(#2e1a1a, 0))
+    dRow(dash, 16, "Wick Deg", str.tostring(round2(bwSlope5)), wickDegBear or wickDegBull, str.tostring(round1(w12)), colD, dSz)
+    dRow(dash, 17, "Temporal*", inFundingWin ? "FUND" : inLiqTrough ? "LIQT" : isWeekend ? "WKND" : "—", tempVuln, str.tostring(tempVuln ? "+20%" : "—"), colD, dSz)
+
+    // Summary row — v1.1: shows Dir count + cooldown
+    table.cell(dash, 0, 18, "T:" + str.tostring(dispTiers) + "/4", text_color=color.white, text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 1, 18, "Dir:" + str.tostring(dispDirCt) + "/7", text_color=dispDirCt >= 2 ? color.new(#00E676, 0) : color.new(#FF5252, 0), text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 2, 18, cooldownOk ? "RDY" : str.tostring(effCooldown - (bar_index - lastSigBar)) + "b", text_color=cooldownOk ? color.new(#00E676, 0) : color.orange, text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 3, 18, "B:" + str.tostring(math.round(bearComposite)), text_color=color.new(#FF5252, 0), text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 4, 18, "L:" + str.tostring(math.round(bullComposite)), text_color=color.new(#00E676, 0), text_size=dSz, bgcolor=hdrBg)
+
+    // Legend row: * = amplifier only
+    table.cell(dash, 0, 19, "* = amplifier", text_color=color.gray, text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 1, 19, "", text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 2, 19, "", text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 3, 19, "", text_size=dSz, bgcolor=hdrBg)
+    table.cell(dash, 4, 19, "", text_size=dSz, bgcolor=hdrBg)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(alertElite and finalBearConf >= 4, "★ Elite SHORT", "PE-F13: ★ ELITE SHORT — {{ticker}} @ {{interval}}")
+alertcondition(alertElite and finalBullConf >= 4, "★ Elite LONG", "PE-F13: ★ ELITE LONG — {{ticker}} @ {{interval}}")
+alertcondition(alertStrong and finalBearConf >= 3, "◆ Strong SHORT", "PE-F13: ◆ STRONG SHORT — {{ticker}} @ {{interval}}")
+alertcondition(alertStrong and finalBullConf >= 3, "◆ Strong LONG", "PE-F13: ◆ STRONG LONG — {{ticker}} @ {{interval}}")
+alertcondition(alertMid and finalBearConf >= 2, "◇ Mid SHORT", "PE-F13: ◇ MID SHORT — {{ticker}} @ {{interval}}")
+alertcondition(alertMid and finalBullConf >= 2, "◇ Mid LONG", "PE-F13: ◇ MID LONG — {{ticker}} @ {{interval}}")
+alertcondition(alertWeak and finalBearConf >= 1, "○ Weak SHORT", "PE-F13: ○ WEAK SHORT — {{ticker}} @ {{interval}}")
+alertcondition(alertWeak and finalBullConf >= 1, "○ Weak LONG", "PE-F13: ○ WEAK LONG — {{ticker}} @ {{interval}}")
+alertcondition(finalBearConf >= 3 or finalBullConf >= 3, "Any Strong+", "PE-F13: ◆+ SIGNAL — {{ticker}} @ {{interval}}")
+alertcondition(finalBearConf >= 1 or finalBullConf >= 1, "Any Signal", "PE-F13: SIGNAL — {{ticker}} @ {{interval}}")

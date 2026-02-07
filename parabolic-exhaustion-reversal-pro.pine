@@ -1,24 +1,10 @@
 //@version=6
-indicator("Parabolic Exhaustion Reversal Pro [Paganie] v5.2", shorttitle="PE-RP v5.2", format=format.price, precision=1)
-
-// Targeted max_bars_back for series used in large lookbacks (percentrank, BBW, etc.)
-max_bars_back(close, 1200)
-max_bars_back(high, 1200)
-max_bars_back(low, 1200)
-max_bars_back(volume, 1200)
+indicator("Parabolic Exhaustion Reversal Pro [Paganie] v5.1", shorttitle="PE-RP v5.1", format=format.price, precision=1)
 
 // ============================================================================
-// PARABOLIC EXHAUSTION REVERSAL PRO v5.2
+// PARABOLIC EXHAUSTION REVERSAL PRO v5.1
 // Detects parabolic price exhaustion for potential reversal signals
 // Auto-adapts: TF <= 15m = Scalp mode, TF > 15m = Swing mode
-//
-// V5.2 - Enhanced Signal Detection and Accuracy:
-// • Tightened shooting star/hammer wick ratio (1.5x/2.0x body, academic standard)
-// • Added Bollinger Band Width percentile exhaustion gate
-// • Added Z-score of returns as statistical overextension measure
-// • Added ADX peak exhaustion signal (ADX > 45 declining)
-// • Added Three Outside Up/Down pattern (~70% win rate)
-// • Added Wyckoff absorption detection (climactic volume + close reversal)
 // ============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,7 +66,7 @@ float T_ADX           = isScalp ? 23.0 : 25.0
 float T_ER            = isScalp ? 0.45 : 0.50
 float T_CHOP          = isScalp ? 55.0 : 52.0
 float T_VOL           = isScalp ? 1.2  : 1.6
-float T_WICK          = isScalp ? 1.5  : 2.0
+float T_WICK          = isScalp ? 0.45 : 0.55
 float T_MIN_RANGE     = isScalp ? 0.55 : 0.70
 float T_EXTREME_ATR   = isScalp ? 0.8  : 0.7
 float T_RSI_LOW       = isScalp ? 38.0 : 42.0
@@ -107,8 +93,6 @@ int dmiLen          = autoTimeframeAdapt ? int(math.max(10, math.round(14 * tfMu
 int erLen           = autoTimeframeAdapt ? int(math.max(8, math.round((isScalp ? 10 : 20) * tfMultiplier))) : (isScalp ? 10 : 20)
 int chopLen         = autoTimeframeAdapt ? int(math.max(10, math.round((isScalp ? 14 : 20) * tfMultiplier))) : (isScalp ? 14 : 20)
 int divLookback     = autoTimeframeAdapt ? (isScalp ? 5 : int(math.max(5, math.min(12, math.round(8 * tfMultiplier))))) : 7
-int bbLen           = autoTimeframeAdapt ? int(math.max(14, math.round(20 * tfMultiplier))) : 20
-int zScoreLen       = autoTimeframeAdapt ? int(math.max(14, math.round((isScalp ? 20 : 30) * tfMultiplier))) : (isScalp ? 20 : 30)
 
 float velocityThreshold = (isScalp ? 1.7 : 1.9) * thresholdMultiplier
 
@@ -162,26 +146,6 @@ bool velocityDecreasing = (priceChange > 0 and accelNegative and acceleration < 
                           (accelNegative and prevAccel1 < 0 and prevAccel2 < 0)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BOLLINGER BAND WIDTH PERCENTILE (v5.2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-float bbBasis  = ta.sma(close, bbLen)
-float bbStdev  = ta.stdev(close, bbLen)
-float bbWidth  = bbStdev > 0 and bbBasis > 0 ? (bbStdev * 2) / bbBasis * 100 : 0
-float bbwPctRank = ta.percentrank(bbWidth, math.max(50, bbLen * 5))
-bool bbwExtreme  = bbwPctRank >= 90
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Z-SCORE OF RETURNS (v5.2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-float zMean    = ta.sma(close, zScoreLen)
-float zStdev   = ta.stdev(close, zScoreLen)
-float zScore   = zStdev > 0 ? (close - zMean) / zStdev : 0.0
-bool zExtHigh  = zScore >= 2.5
-bool zExtLow   = zScore <= -2.5
-
-// ─────────────────────────────────────────────────────────────────────────────
 // CANDLE PATTERNS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -194,10 +158,8 @@ float minCandleRng = T_MIN_RANGE * thresholdMultiplier * atr
 bool isBullish = close > open
 bool isBearish = close < open
 
-// Shooting star / hammer use strict wick ratio (1.5x-2.0x body per academic standard)
-bool shootingStar      = isBearish and upperWick >= bodySize * T_WICK and lowerWick < bodySize * 0.3 and candleRange >= minCandleRng
-bool hammer            = isBullish and lowerWick >= bodySize * T_WICK and upperWick < bodySize * 0.3 and candleRange >= minCandleRng
-// Long wick patterns use looser ratio (dominant wick direction)
+bool shootingStar      = isBearish and upperWick >= bodySize * T_WICK and candleRange >= minCandleRng
+bool hammer            = isBullish and lowerWick >= bodySize * T_WICK and candleRange >= minCandleRng
 bool bearishWickPat    = upperWick >= lowerWick * 2 and upperWick >= bodySize and candleRange >= minCandleRng
 bool bullishWickPat    = lowerWick >= upperWick * 2 and lowerWick >= bodySize and candleRange >= minCandleRng
 
@@ -205,13 +167,9 @@ float prevBodySize     = math.abs(close[1] - open[1])
 bool bullishEngulfing  = isBullish and close[1] < open[1] and close > open[1] and open <= close[1] and bodySize > prevBodySize * 1.1 and bodySize >= atr * 0.4
 bool bearishEngulfing  = isBearish and close[1] > open[1] and close < open[1] and open >= close[1] and bodySize > prevBodySize * 1.1 and bodySize >= atr * 0.4
 
-// Three Outside Up/Down (v5.2) — engulfing confirmed by 3rd bar closing beyond
-bool threeOutsideUp   = bullishEngulfing[1] and isBullish and close > high[1]
-bool threeOutsideDown = bearishEngulfing[1] and isBearish and close < low[1]
-
 bool isDoji            = bodySize <= candleRange * 0.1 and candleRange >= atr * 0.5
-bool bearishReversalCandle = shootingStar or bearishWickPat or bearishEngulfing or threeOutsideDown or (isDoji and upperWick > lowerWick * 1.5)
-bool bullishReversalCandle = hammer or bullishWickPat or bullishEngulfing or threeOutsideUp or (isDoji and lowerWick > upperWick * 1.5)
+bool bearishReversalCandle = shootingStar or bearishWickPat or bearishEngulfing or (isDoji and upperWick > lowerWick * 1.5)
+bool bullishReversalCandle = hammer or bullishWickPat or bullishEngulfing or (isDoji and lowerWick > upperWick * 1.5)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROC & VOLUME
@@ -239,11 +197,6 @@ float recent10Low  = ta.lowest(low, 10)
 bool bearishVolDiv = high >= recent10High[1] * 0.998 and volumeDeclining and not volumeClimax
 bool bullishVolDiv = low <= recent10Low[1] * 1.002 and volumeDeclining and not volumeClimax
 
-// Wyckoff absorption detection (v5.2): climactic volume bar closing opposite to trend
-float closeLoc = candleRange > 0 ? (close - low) / candleRange : 0.5
-bool wyckoffAbsorptionBull = volumeClimaxStrong and parabolicDown and closeLoc >= 0.6
-bool wyckoffAbsorptionBear = volumeClimaxStrong and parabolicUp and closeLoc <= 0.4
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PRICE EXTREMES
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,12 +206,6 @@ float priceLow        = ta.lowest(low, extremeLookback)
 float extremeOffset   = T_EXTREME_ATR * atr
 bool nearHighExtreme  = atr > 0 and high >= (priceHigh - extremeOffset)
 bool nearLowExtreme   = atr > 0 and low <= (priceLow + extremeOffset)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ADX PEAK EXHAUSTION (v5.2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-bool adxPeakExhaustion = adx > 45 and adx < nz(adx[1]) and nz(adx[1]) >= nz(adx[2])
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RSI DIVERGENCE
@@ -316,8 +263,6 @@ if parabolicDown
     longScore += 2.0
 if bullishReversalCandle
     longScore += 2.0
-if threeOutsideUp
-    longScore += 0.5
 if parabolicDown and bullishReversalCandle
     longScore += 0.8
 if bullishEngulfing
@@ -336,22 +281,12 @@ if bullishDivergence
     longScore += 1.5
 if htfAlignedLong
     longScore += 0.8
-if bbwExtreme
-    longScore += 0.8
-if zExtLow
-    longScore += 1.0
-if adxPeakExhaustion and parabolicDown
-    longScore += 0.8
-if wyckoffAbsorptionBull
-    longScore += 0.5
 
 float shortScore = 0.0
 if parabolicUp
     shortScore += 2.0
 if bearishReversalCandle
     shortScore += 2.0
-if threeOutsideDown
-    shortScore += 0.5
 if parabolicUp and bearishReversalCandle
     shortScore += 0.8
 if bearishEngulfing
@@ -370,14 +305,6 @@ if bearishDivergence
     shortScore += 1.5
 if htfAlignedShort
     shortScore += 0.8
-if bbwExtreme
-    shortScore += 0.8
-if zExtHigh
-    shortScore += 1.0
-if adxPeakExhaustion and parabolicUp
-    shortScore += 0.8
-if wyckoffAbsorptionBear
-    shortScore += 0.5
 
 // Penalties
 bool downTrendStrong = isTrending and diMinus > diPlus
@@ -409,8 +336,8 @@ if extraConfirmationInChop and not isTrending and not isHighVolatility
     minConfRequired += 1
 minConfRequired := math.min(minConfRequired, 5)
 
-int longConf  = (longScore >= minScoreRequired ? 1 : 0) + (bullishReversalCandle or nearLowExtreme or bullishEngulfing ? 1 : 0) + (velocityDecreasing ? 1 : 0) + (hasVolumeSignal or bullishVolDiv ? 1 : 0) + (rsi < T_RSI_LOW or bullishDivergence or zExtLow ? 1 : 0)
-int shortConf = (shortScore >= minScoreRequired ? 1 : 0) + (bearishReversalCandle or nearHighExtreme or bearishEngulfing ? 1 : 0) + (velocityDecreasing ? 1 : 0) + (hasVolumeSignal or bearishVolDiv ? 1 : 0) + (rsi > T_RSI_HIGH or bearishDivergence or zExtHigh ? 1 : 0)
+int longConf  = (longScore >= minScoreRequired ? 1 : 0) + (bullishReversalCandle or nearLowExtreme or bullishEngulfing ? 1 : 0) + (velocityDecreasing ? 1 : 0) + (hasVolumeSignal or bullishVolDiv ? 1 : 0) + (rsi < T_RSI_LOW or bullishDivergence ? 1 : 0)
+int shortConf = (shortScore >= minScoreRequired ? 1 : 0) + (bearishReversalCandle or nearHighExtreme or bearishEngulfing ? 1 : 0) + (velocityDecreasing ? 1 : 0) + (hasVolumeSignal or bearishVolDiv ? 1 : 0) + (rsi > T_RSI_HIGH or bearishDivergence ? 1 : 0)
 
 bool trendOkLong  = not useTrendFilter or not bearishRegime or bullishDivergence
 bool trendOkShort = not useTrendFilter or not bullishRegime or bearishDivergence
@@ -479,32 +406,32 @@ color lineColor = osc >= upperZone ? bearishColor : osc <= lowerZone ? bullishCo
 plot(osc, "PE-RP", lineColor, 3)
 
 // Signal Markers
-plotshape(showSignalMarkers and longSignal and longConfidence == 3 ? osc - 6 : na, "Premium Long", shape.labelup, location.absolute, bullishColor, text="P", textcolor=color.white, size=size.small)
-plotshape(showSignalMarkers and longSignal and longConfidence == 2 ? osc - 5 : na, "High Long", shape.labelup, location.absolute, bullishColor, text="H", textcolor=color.white, size=size.tiny)
-plotshape(showSignalMarkers and longSignal and longConfidence == 1 ? osc - 4 : na, "Std Long", shape.triangleup, location.absolute, color.new(bullishColor, 20), size=size.tiny)
-plotshape(showSignalMarkers and shortSignal and shortConfidence == 3 ? osc + 6 : na, "Premium Short", shape.labeldown, location.absolute, bearishColor, text="P", textcolor=color.white, size=size.small)
-plotshape(showSignalMarkers and shortSignal and shortConfidence == 2 ? osc + 5 : na, "High Short", shape.labeldown, location.absolute, bearishColor, text="H", textcolor=color.white, size=size.tiny)
-plotshape(showSignalMarkers and shortSignal and shortConfidence == 1 ? osc + 4 : na, "Std Short", shape.triangledown, location.absolute, color.new(bearishColor, 20), size=size.tiny)
+plotshape(showSignalMarkers and longSignal and longConfidence == 3 ? osc - 6 : na, "🔥 Premium Long", shape.labelup, location.absolute, bullishColor, text="🔥", textcolor=color.white, size=size.small)
+plotshape(showSignalMarkers and longSignal and longConfidence == 2 ? osc - 5 : na, "⚡ High Long", shape.labelup, location.absolute, bullishColor, text="⚡", textcolor=color.white, size=size.tiny)
+plotshape(showSignalMarkers and longSignal and longConfidence == 1 ? osc - 4 : na, "✓ Std Long", shape.triangleup, location.absolute, color.new(bullishColor, 20), size=size.tiny)
+plotshape(showSignalMarkers and shortSignal and shortConfidence == 3 ? osc + 6 : na, "🔥 Premium Short", shape.labeldown, location.absolute, bearishColor, text="🔥", textcolor=color.white, size=size.small)
+plotshape(showSignalMarkers and shortSignal and shortConfidence == 2 ? osc + 5 : na, "⚡ High Short", shape.labeldown, location.absolute, bearishColor, text="⚡", textcolor=color.white, size=size.tiny)
+plotshape(showSignalMarkers and shortSignal and shortConfidence == 1 ? osc + 4 : na, "✓ Std Short", shape.triangledown, location.absolute, color.new(bearishColor, 20), size=size.tiny)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ALERTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-alertcondition(alertPremiumSignals and longSignal and longConfidence == 3, "Premium Long", "PREMIUM LONG\nPE-RP v5.2")
-alertcondition(alertPremiumSignals and shortSignal and shortConfidence == 3, "Premium Short", "PREMIUM SHORT\nPE-RP v5.2")
-alertcondition(alertHighSignals and longSignal and longConfidence == 2, "HIGH Long", "HIGH QUALITY LONG\nPE-RP v5.2")
-alertcondition(alertHighSignals and shortSignal and shortConfidence == 2, "HIGH Short", "HIGH QUALITY SHORT\nPE-RP v5.2")
-alertcondition(alertStandardSignals and longSignal and longConfidence <= 1, "Standard Long", "STANDARD LONG\nPE-RP v5.2")
-alertcondition(alertStandardSignals and shortSignal and shortConfidence <= 1, "Standard Short", "STANDARD SHORT\nPE-RP v5.2")
+alertcondition(alertPremiumSignals and longSignal and longConfidence == 3, "🔥 PREMIUM Long", "🔥 PREMIUM LONG\nPE-RP v5.1")
+alertcondition(alertPremiumSignals and shortSignal and shortConfidence == 3, "🔥 PREMIUM Short", "🔥 PREMIUM SHORT\nPE-RP v5.1")
+alertcondition(alertHighSignals and longSignal and longConfidence == 2, "⚡ HIGH Long", "⚡ HIGH QUALITY LONG\nPE-RP v5.1")
+alertcondition(alertHighSignals and shortSignal and shortConfidence == 2, "⚡ HIGH Short", "⚡ HIGH QUALITY SHORT\nPE-RP v5.1")
+alertcondition(alertStandardSignals and longSignal and longConfidence <= 1, "✓ Standard Long", "✓ STANDARD LONG\nPE-RP v5.1")
+alertcondition(alertStandardSignals and shortSignal and shortConfidence <= 1, "✓ Standard Short", "✓ STANDARD SHORT\nPE-RP v5.1")
 
 bool enteringOverbought = ta.crossover(osc, upperZone)
 bool enteringOversold   = ta.crossunder(osc, lowerZone)
 
-alertcondition(alertZoneWarnings and enteringOversold, "Oversold Zone", "OVERSOLD\nPE-RP v5.2")
-alertcondition(alertZoneWarnings and enteringOverbought, "Overbought Zone", "OVERBOUGHT\nPE-RP v5.2")
-alertcondition(alertZoneWarnings and osc <= 15, "EXTREME Oversold", "EXTREME OVERSOLD\nPE-RP v5.2")
-alertcondition(alertZoneWarnings and osc >= 85, "EXTREME Overbought", "EXTREME OVERBOUGHT\nPE-RP v5.2")
-alertcondition(showDivergences and bullishDivergence, "Bullish Divergence", "BULLISH DIVERGENCE\nPE-RP v5.2")
-alertcondition(showDivergences and bearishDivergence, "Bearish Divergence", "BEARISH DIVERGENCE\nPE-RP v5.2")
-alertcondition(bullishVolDiv and nearLowExtreme, "Bullish Vol Div", "BULLISH VOL DIVERGENCE\nPE-RP v5.2")
-alertcondition(bearishVolDiv and nearHighExtreme, "Bearish Vol Div", "BEARISH VOL DIVERGENCE\nPE-RP v5.2")
+alertcondition(alertZoneWarnings and enteringOversold, "📍 Oversold Zone", "📍 OVERSOLD\nPE-RP v5.1")
+alertcondition(alertZoneWarnings and enteringOverbought, "📍 Overbought Zone", "📍 OVERBOUGHT\nPE-RP v5.1")
+alertcondition(alertZoneWarnings and osc <= 15, "🔴 EXTREME Oversold", "🔴 EXTREME OVERSOLD\nPE-RP v5.1")
+alertcondition(alertZoneWarnings and osc >= 85, "🔴 EXTREME Overbought", "🔴 EXTREME OVERBOUGHT\nPE-RP v5.1")
+alertcondition(showDivergences and bullishDivergence, "🔄 Bullish Divergence", "🔄 BULLISH DIVERGENCE\nPE-RP v5.1")
+alertcondition(showDivergences and bearishDivergence, "🔄 Bearish Divergence", "🔄 BEARISH DIVERGENCE\nPE-RP v5.1")
+alertcondition(bullishVolDiv and nearLowExtreme, "📊 Bullish Vol Div", "📊 BULLISH VOL DIVERGENCE\nPE-RP v5.1")
+alertcondition(bearishVolDiv and nearHighExtreme, "📊 Bearish Vol Div", "📊 BEARISH VOL DIVERGENCE\nPE-RP v5.1")

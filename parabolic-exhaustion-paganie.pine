@@ -1,12 +1,6 @@
 //@version=6
 indicator("Parabolic Exhaustion [Paganie] v4.0", overlay=true, max_labels_count=100)
 
-// Targeted max_bars_back for series used in large lookbacks (ROC percentile, volume percentile)
-max_bars_back(close, 1200)
-max_bars_back(high, 1200)
-max_bars_back(low, 1200)
-max_bars_back(volume, 1200)
-
 // ============================================================================
 // PARABOLIC EXHAUSTION v4.0 - Production Release
 // Catch parabolic tops/bottoms with CONFIDENCE LEVELS + SMART FILTERS
@@ -94,144 +88,144 @@ float volumeMultiplier =
 // ============================================================================
 
 // Signal Settings
-string GRP_SIG = "📊 Signal Settings"
+string GROUP_SIGNAL = "Signal Settings"
 
 string minConfidenceLevel = input.string("Medium (L2/S2)", "Signal Quality",
      options=["High Only (L3/S3)", "Medium (L2/S2)", "All Signals (L1/S1)"],
-     group=GRP_SIG,
+     group=GROUP_SIGNAL,
      tooltip="HIGH = Fewest signals, best quality\nMEDIUM = Balanced (Recommended)\nALL = Most signals, includes lower quality")
 
 string entryModel = input.string("Immediate", "Entry Mode",
      options=["Immediate", "Break Confirmed", "Break + Retest"],
-     group=GRP_SIG,
+     group=GROUP_SIGNAL,
      tooltip="IMMEDIATE = Signal on pattern detection\nBREAK CONFIRMED = Wait for close above/below level\nBREAK + RETEST = Wait for break and pullback")
 
 int cooldownBarsInput = input.int(5, "Cooldown Bars", minval=0, maxval=50,
-     group=GRP_SIG,
+     group=GROUP_SIGNAL,
      tooltip="Minimum bars between signals to prevent clustering")
 
 // Filters
-string GRP_FLT = "🔍 Filters"
+string GROUP_FILTER = "Filters"
 
 string confirmationMode = input.string("Off", "Sweep Confirmation",
      options=["Off", "Require Sweep"],
-     group=GRP_FLT,
+     group=GROUP_FILTER,
      tooltip="OFF = Signal on pattern alone\nREQUIRE SWEEP = Price must sweep recent high/low and close back")
 
-bool useVolatilityFilter = input.bool(true, "Volatility Filter", group=GRP_FLT,
+bool useVolatilityFilter = input.bool(true, "Volatility Filter", group=GROUP_FILTER,
      tooltip="Blocks signals during low-volatility markets")
 
-bool useRegimeFilter = input.bool(false, "Higher TF Trend Filter", group=GRP_FLT,
+bool useRegimeFilter = input.bool(false, "Higher TF Trend Filter", group=GROUP_FILTER,
      tooltip="Blocks counter-trend signals when higher timeframe shows strong trend")
 
-bool requireBothCore = input.bool(true, "Require Velocity + Candle", group=GRP_FLT,
+bool requireBothCore = input.bool(true, "Require Velocity + Candle", group=GROUP_FILTER,
      tooltip="Requires BOTH parabolic velocity AND reversal candle pattern")
 
-bool useTrendPenalty = input.bool(true, "Trend Penalty (ADX)", group=GRP_FLT,
+bool useTrendPenalty = input.bool(true, "Trend Penalty (ADX)", group=GROUP_FILTER,
      tooltip="Penalizes signals against strong trends. Recommended ON.")
 
-bool useChopFilter = input.bool(true, "Chop Filter", group=GRP_FLT,
+bool useChopFilter = input.bool(true, "Chop Filter", group=GROUP_FILTER,
      tooltip="Blocks signals during choppy/ranging markets")
 
-bool useConfirmationGates = input.bool(true, "Confirmation Gates", group=GRP_FLT,
+bool useConfirmationGates = input.bool(true, "Confirmation Gates", group=GROUP_FILTER,
      tooltip="Requires multiple diverse conditions to pass. Recommended ON.")
 
-int minConfirmationsInput = input.int(3, "Min Confirmations", minval=2, maxval=5, group=GRP_FLT,
+int minConfirmationsInput = input.int(3, "Min Confirmations", minval=2, maxval=5, group=GROUP_FILTER,
      tooltip="Minimum confirmation gates required (out of 5)")
 
 // Sensitivity
-string GRP_SENS = "⚙️ Sensitivity"
+string GROUP_SENS = "Sensitivity"
 
-bool autoAdaptive = input.bool(true, "Auto-Adapt to Timeframe", group=GRP_SENS,
+bool autoAdaptive = input.bool(true, "Auto-Adapt to Timeframe", group=GROUP_SENS,
      tooltip="Automatically adjusts parameters based on chart timeframe. Recommended ON.")
 
 float velocityThresholdInput = input.float(1.8, "Velocity Threshold", minval=0.5, maxval=5.0, step=0.1,
-     group=GRP_SENS,
+     group=GROUP_SENS,
      tooltip="Minimum price velocity (in ATR units) to detect parabolic move")
 
 float minPriceMoveInput = input.float(2.0, "Min Price Move (ATR)", minval=0.5, maxval=5.0, step=0.1,
-     group=GRP_SENS,
+     group=GROUP_SENS,
      tooltip="Minimum price range required before reversal signal")
 
 float volMultiplierInput = input.float(1.4, "Volume Spike Multiplier", minval=1.0, maxval=3.0, step=0.1,
-     group=GRP_SENS,
+     group=GROUP_SENS,
      tooltip="Volume must be this multiple of average to count as climax")
 
 // Display
-string GRP_VIS = "🎨 Display"
+string GROUP_DISPLAY = "Display"
 
 string signalStyle = input.string("Labels", "Signal Style",
      options=["Labels", "Triangles", "Both"],
-     group=GRP_VIS,
+     group=GROUP_DISPLAY,
      tooltip="LABELS = Show L1/L2/L3 text\nTRIANGLES = Simple arrows\nBOTH = Labels and triangles")
 
-bool showConfidenceColors = input.bool(true, "Color by Confidence", group=GRP_VIS,
+bool showConfidenceColors = input.bool(true, "Color by Confidence", group=GROUP_DISPLAY,
      tooltip="Use different color shades for signal quality levels")
 
-bool showSetupMarkers = input.bool(false, "Show Setup Detection", group=GRP_VIS,
+bool showSetupMarkers = input.bool(false, "Show Setup Detection", group=GROUP_DISPLAY,
      tooltip="Shows circles where exhaustion pattern is first detected")
 
-bool debugMode = input.bool(false, "Debug Panel", group=GRP_VIS,
+bool debugMode = input.bool(false, "Debug Panel", group=GROUP_DISPLAY,
      tooltip="Shows detailed scoring breakdown")
 
 // Advanced
-string GRP_ADV = "🛠️ Advanced"
+string GROUP_ADV = "Advanced"
 
 int velocityPeriodInput = input.int(5, "Velocity Lookback", minval=2, maxval=20,
-     group=GRP_ADV, tooltip="Bars to measure price acceleration")
+     group=GROUP_ADV, tooltip="Bars to measure price acceleration")
 
 int atrPeriodInput = input.int(14, "ATR Period", minval=5, maxval=50,
-     group=GRP_ADV, tooltip="Period for ATR calculation")
+     group=GROUP_ADV, tooltip="Period for ATR calculation")
 
 float minWickRatioInput = input.float(1.5, "Min Wick Ratio", minval=0.5, maxval=3.0, step=0.1,
-     group=GRP_ADV, tooltip="Wick must be this multiple of body size")
+     group=GROUP_ADV, tooltip="Wick must be this multiple of body size")
 
 float minCandleSizeInput = input.float(0.7, "Min Candle Size (ATR)", minval=0.3, maxval=2.0, step=0.1,
-     group=GRP_ADV, tooltip="Minimum candle range in ATR units")
+     group=GROUP_ADV, tooltip="Minimum candle range in ATR units")
 
 int priceExtremeLookbackInput = input.int(40, "Price Extreme Lookback", minval=10, maxval=200,
-     group=GRP_ADV, tooltip="Bars to look back for significant high/low")
+     group=GROUP_ADV, tooltip="Bars to look back for significant high/low")
 
 int sweepLookbackInput = input.int(20, "Sweep Lookback", minval=5, maxval=100,
-     group=GRP_ADV, tooltip="Bars to look back for sweep confirmation")
+     group=GROUP_ADV, tooltip="Bars to look back for sweep confirmation")
 
 int maxWaitBarsInput = input.int(20, "Max Wait for Confirmation", minval=5, maxval=100,
-     group=GRP_ADV, tooltip="Maximum bars to wait for confirmation before setup expires")
+     group=GROUP_ADV, tooltip="Maximum bars to wait for confirmation before setup expires")
 
 // Internal Tuning
-string GRP_INT = "🔧 Internal Tuning"
+string GROUP_INT = "Internal Tuning"
 
-int rocPeriodInput = input.int(8, "ROC Period", minval=1, group=GRP_INT)
-float rocExtremeInput = input.float(75.0, "ROC Extreme %", minval=50.0, maxval=99.9, group=GRP_INT)
-int rocLookbackInput = input.int(120, "ROC Percentile Lookback", minval=50, group=GRP_INT)
-bool requireRocExtreme = input.bool(false, "Require ROC Extreme", group=GRP_INT)
+int rocPeriodInput = input.int(8, "ROC Period", minval=1, group=GROUP_INT)
+float rocExtremeInput = input.float(75.0, "ROC Extreme %", minval=50.0, maxval=99.9, group=GROUP_INT)
+int rocLookbackInput = input.int(120, "ROC Percentile Lookback", minval=50, group=GROUP_INT)
+bool requireRocExtreme = input.bool(false, "Require ROC Extreme", group=GROUP_INT)
 
-int volPeriodInput = input.int(20, "Volume MA Period", minval=5, group=GRP_INT)
-int volPercentileLookback = input.int(200, "Volume Percentile Lookback", minval=50, group=GRP_INT)
+int volPeriodInput = input.int(20, "Volume MA Period", minval=5, group=GROUP_INT)
+int volPercentileLookback = input.int(200, "Volume Percentile Lookback", minval=50, group=GROUP_INT)
 
-int rsiPeriod = input.int(14, "RSI Period", minval=5, maxval=30, group=GRP_INT)
-int rsiOversold = input.int(30, "RSI Oversold", minval=10, maxval=45, group=GRP_INT)
-int rsiOverbought = input.int(70, "RSI Overbought", minval=55, maxval=90, group=GRP_INT)
+int rsiPeriod = input.int(14, "RSI Period", minval=5, maxval=30, group=GROUP_INT)
+int rsiOversold = input.int(30, "RSI Oversold", minval=10, maxval=45, group=GROUP_INT)
+int rsiOverbought = input.int(70, "RSI Overbought", minval=55, maxval=90, group=GROUP_INT)
 
-int dmiLength = input.int(14, "DMI Length", minval=5, maxval=30, group=GRP_INT)
-int adxTrendThreshold = input.int(25, "ADX Trend Threshold", minval=15, maxval=40, group=GRP_INT)
+int dmiLength = input.int(14, "DMI Length", minval=5, maxval=30, group=GROUP_INT)
+int adxTrendThreshold = input.int(25, "ADX Trend Threshold", minval=15, maxval=40, group=GROUP_INT)
 
-int chopLength = input.int(14, "Chop Index Length", minval=5, maxval=30, group=GRP_INT)
-int chopThreshold = input.int(62, "Chop Threshold", minval=45, maxval=75, group=GRP_INT)
+int chopLength = input.int(14, "Chop Index Length", minval=5, maxval=30, group=GROUP_INT)
+int chopThreshold = input.int(62, "Chop Threshold", minval=45, maxval=75, group=GROUP_INT)
 
-int divPivotLeft = input.int(5, "Divergence Pivot Left", minval=2, maxval=10, group=GRP_INT)
-int divPivotRight = input.int(5, "Divergence Pivot Right", minval=2, maxval=10, group=GRP_INT)
+int divPivotLeft = input.int(5, "Divergence Pivot Left", minval=2, maxval=10, group=GROUP_INT)
+int divPivotRight = input.int(5, "Divergence Pivot Right", minval=2, maxval=10, group=GROUP_INT)
 
-float extremeTolAtrInput = input.float(0.6, "Extreme Tolerance (ATR)", step=0.1, group=GRP_INT)
-float retestTolAtrInput = input.float(0.25, "Retest Tolerance (ATR)", step=0.05, group=GRP_INT)
+float extremeTolAtrInput = input.float(0.6, "Extreme Tolerance (ATR)", step=0.1, group=GROUP_INT)
+float retestTolAtrInput = input.float(0.25, "Retest Tolerance (ATR)", step=0.05, group=GROUP_INT)
 
-bool requireNoNewExtreme = input.bool(true, "Structure Integrity", group=GRP_INT)
-int pivotLeft = input.int(3, "Pivot Left Bars", minval=1, group=GRP_INT)
-int pivotRight = input.int(3, "Pivot Right Bars", minval=1, group=GRP_INT)
-bool bosUsePivots = input.bool(true, "Use Swing Points for BOS", group=GRP_INT)
-float maxBosLevelDistAtrInput = input.float(6.0, "Max BOS Distance (ATR)", step=0.5, group=GRP_INT)
+bool requireNoNewExtreme = input.bool(true, "Structure Integrity", group=GROUP_INT)
+int pivotLeft = input.int(3, "Pivot Left Bars", minval=1, group=GROUP_INT)
+int pivotRight = input.int(3, "Pivot Right Bars", minval=1, group=GROUP_INT)
+bool bosUsePivots = input.bool(true, "Use Swing Points for BOS", group=GROUP_INT)
+float maxBosLevelDistAtrInput = input.float(6.0, "Max BOS Distance (ATR)", step=0.5, group=GROUP_INT)
 
-int regimeEmaLen = input.int(200, "Regime EMA Length", group=GRP_INT)
+int regimeEmaLen = input.int(200, "Regime EMA Length", group=GROUP_INT)
 
 // ============================================================================
 // 3. ADAPTIVE PARAMETER CALCULATION
