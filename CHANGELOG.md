@@ -4,6 +4,57 @@ Your professional order block indicator keeps getting better! Here's everything 
 
 ---
 
+## 🏛️ v5.1.0 (February 2026) - ICT STANDARD COMPLIANCE
+
+### What's New: Real ICT Order Block Detection
+
+This release overhauls the core detection and scoring engine to match actual ICT (Inner Circle Trader) methodology. If you wanted proper institutional order blocks - this is it.
+
+**FVG Now Mandatory (Scalper Mode):**
+- ICT says displacement MUST leave a Fair Value Gap to validate institutional intent
+- Scalper Auto mode now forces FVG confirmation ON
+- Dedicated `checkScalperFVG` validates gap between impulse and OB candle
+- Supports Classic, Strict (body gap), and Loose (wick gap) modes
+
+**Swing-Based Dealing Range:**
+- Premium/Discount zones now use actual pivot swing highs/lows
+- Replaces the old rolling N-bar window with proper ICT dealing range
+- Configurable pivot length (Auto adapts: 10 Scalping, 15 Swing, 20 Position)
+- OTE (Optimal Trade Entry) zone calculated from real dealing range
+
+**Tier-Based Quality Scoring:**
+- Tier 1 (Core OB Quality): displacement strength, FVG (+2), MSB (+1), volume spike (+1) - max 6
+- Tier 2 (Context, capped +3): session, zone alignment, crypto, trend
+- Context alone can NO LONGER promote a weak OB to Elite
+- Elite requires: core >= 4, total >= 6, AND volume confirmation
+
+**Consequent Encroachment (CE) Mitigation:**
+- All presets now default to CE (50% of OB) for mitigation
+- ICT standard: price mitigates at the midpoint, not the wick or close
+
+**OB Age Decay:**
+- Fresh OBs are stronger per ICT - untested OBs gradually lose rating
+- Elite -> Strong -> Mid -> Weak over configurable decay window
+- Auto-scales: 50 bars (Scalping), 100 (Swing), 200 (Position)
+- Retested OBs reset their decay clock
+
+**Full Candle Sizing Default:**
+- Zone now spans entire candle wick-to-wick (ICT standard)
+- New Block Sizing input: "Full candle" / "Body Only" / "Smart"
+- Smart sizing remains optional for compact zones
+
+**Displacement Threshold Raised:**
+- From 0.8x to 1.0x ATR - body must at least equal ATR
+- Filters out marginal moves that don't represent true institutional displacement
+
+**Why This Matters:**
+- Fewer but higher-quality order blocks
+- Blocks that actually match what ICT teaches
+- Scoring reflects real OB quality, not inflated context points
+- Age decay removes stale zones automatically
+
+---
+
 ## 🎯 v3.4.0 (January 2026) - PRODUCTION UX FINALIZATION
 
 ### What's New: Smarter Defaults + Stability + Alerts-Only Mode
@@ -309,6 +360,7 @@ You probably won't notice the code changes - you'll just notice everything works
 
 ## 📅 Version History Timeline
 
+- **v5.1.0** (Feb 2026) - 🏛️ ICT Standard Compliance (FVG mandatory, swing dealing range, tier scoring, CE mitigation, age decay)
 - **v3.4.0** (Jan 2026) - 🎯 Production UX (Auto mode, anti-spam alerts, opt-in liquidity)
 - **v3.3.0** (Jan 2026) - 📊 Power Row (BUY/SELL pressure tracking)
 - **v3.1.0** (Jan 2026) - 💧 Liquidity Sweeps (see stop hunts)
@@ -350,8 +402,8 @@ Trade smart. Trade safe. 🛡️
 
 ---
 
-**Current Version:** 3.4.0  
-**Last Updated:** January 18, 2026  
+**Current Version:** 5.1.0
+**Last Updated:** February 8, 2026
 **Next Update:** We're always improving! Join Discord for update notifications.
 
 ---

@@ -1,9 +1,43 @@
 //@version=6
-indicator("ICT Order Block Pro [Paganie] v5.0.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("ICT Order Block Pro [Paganie] v5.2.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
-// ICT ORDER BLOCK PRO V5.0.0 - INSTITUTIONAL SMART MONEY CONCEPTS
+// ICT ORDER BLOCK PRO V5.2.0 - INSTITUTIONAL SMART MONEY CONCEPTS
 // Professional-grade order block detection with ICT/SMC methodology
+//
+// V5.2.0 - Alert System Refactor:
+// • Signal timing fix: Touch, rejection, and proximity alerts now respect
+//   the "Confirmed (bar close)" setting. Previously only new OB alerts did.
+// • Dynamic alert messages: alert() calls with price levels, strength, and
+//   volume alongside existing alertcondition() for backward compatibility.
+// • Rejection re-arm: Rejection alerts can fire again after price completely
+//   leaves the zone and returns (was one-shot per block lifetime).
+// • New alert types: OB Mitigated and Strength Decay notifications.
+// • Exposed alert filters: "Alert Only Strong/Elite" and "Require Directional
+//   Approach" are now user-configurable inputs (were hardcoded).
+// • Dead code cleanup: Removed unused bullTouch/bearTouch variables.
+// • Consistent anti-spam: All latch patterns standardized, unnecessary var
+//   keywords removed from per-bar-reset flags.
+//
+// V5.1.0 - ICT Standard Compliance:
+// • FVG mandatory: Scalper mode now requires Fair Value Gap confirmation
+//   (ICT: displacement MUST leave a gap to validate institutional intent)
+// • Swing-based dealing range: Premium/Discount zones now use actual pivot
+//   swing highs/lows instead of rolling N-bar window (proper ICT dealing range)
+// • Core quality scoring: Restructured from flat additive to tier-based system.
+//   Tier 1 (core OB quality): displacement strength, FVG, MSB, volume spike.
+//   Tier 2 (context bonus, capped +3): session, zone alignment, crypto, trend.
+//   Context alone can no longer promote a weak OB to Elite.
+// • CE mitigation default: All presets now default to Consequent Encroachment
+//   (50% of OB) for mitigation, per ICT methodology
+// • OB age decay: Fresh OBs are stronger per ICT. Untested OBs gradually
+//   lose strength rating (Elite→Strong→Mid→Weak) after configurable window
+// • Full candle sizing: Default zone now spans entire candle (ICT standard).
+//   Smart sizing remains optional for compact zones.
+// • Displacement threshold: Raised from 0.8 to 1.0× ATR for meaningful
+//   displacement (body must at least equal ATR)
+// • Scoring metadata: OBs now store impulse strength, FVG/MSB confirmation
+//   status for accurate quality assessment throughout their lifetime
 //
 // V5.0.0 - ICT Methodology Audit & Corrections:
 // • Session/Killzone scoring: OBs formed during London/NY/Overlap killzones
@@ -131,6 +165,8 @@ int sweepLinkageLookback = input.int(20, "Sweep Linkage Lookback", minval=5, max
      tooltip="Max bars to look back for a recent sweep when scoring OBs. Higher = more linkages found.")
 bool requireMicroSweep = input.bool(false, "Require Candle Sweep (Strict ICT)", group=GRP_ICT,
      tooltip="ICT strict rule: the OB candle must sweep the prior candle's high/low to qualify. When OFF, micro-sweep adds +1 score instead of gating. Turn ON for purist ICT methodology (fewer but higher-quality OBs).")
+int pdPivotLength = input.int(0, "Dealing Range Pivot (0=Auto)", minval=0, maxval=50, group=GRP_ICT,
+     tooltip="Pivot length for swing-based dealing range used in Premium/Discount zone. 0=auto by timeframe. ICT: P/D is defined by the current swing high/low, not a rolling window.")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // MODULES
@@ -193,8 +229,12 @@ alertTouch = input.bool(true, "Zone Touch", group=GRP_ALERT, tooltip="Alert when
 alertReject = input.bool(true, "Rejection", group=GRP_ALERT, tooltip="Alert when price rejects from OB.")
 alertProximity = input.bool(true, "Approaching Zone", group=GRP_ALERT, tooltip="Alert when price approaches OB zones.")
 alertLiquidity = input.bool(true, "Liquidity Events", group=GRP_ALERT, tooltip="Alert on sweeps and liquidity runs. Essential for crypto trading.")
+alertMitigated = input.bool(true, "Zone Mitigated", group=GRP_ALERT, tooltip="Alert when an order block is mitigated (invalidated by price).")
+alertDecayed = input.bool(false, "Strength Decay", group=GRP_ALERT, tooltip="Alert when an OB's strength rating decays due to age (e.g. Elite→Strong).")
 float proximityThreshold = input.float(0.5, "Alert Proximity (%)", step=0.1, group=GRP_ALERT, tooltip="Alert when price is within this % of OB (tighter = more actionable).")
 float liquidityProximityPct = input.float(0.3, "LQ Alert Proximity (%)", step=0.1, group=GRP_ALERT, tooltip="Alert when price is within this % of BSL/SSL.")
+bool alertOnlyStrongInput = input.bool(true, "Alert Only Strong/Elite", group=GRP_ALERT, tooltip="Proximity and approach alerts only fire for Strong/Elite OBs. Disable to include Mid-rated OBs.")
+bool alertDirectionalApproach = input.bool(true, "Require Directional Approach", group=GRP_ALERT, tooltip="Proximity alerts only fire when the current candle moves toward the zone (bearish candle approaching bull OB, etc.).")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // DETECTION
@@ -205,7 +245,7 @@ detectionMethod = input.string("Scalper", "Detection Method", options=["Institut
 useAdaptiveScan = input.bool(true, "Adaptive Scan Window", group=GRP_DET, tooltip="Automatically extends scan window in low volatility to find OBs.")
 int scalperLookback = input.int(10, "Scalper Lookback", minval=1, group=GRP_DET, tooltip="Bars to scan for impulse candles in Scalper mode.")
 int obScanWindow = input.int(3, "OB Scan Window", minval=1, group=GRP_DET, tooltip="Bars to scan back from impulse to find OB candle.")
-float dispAtrBodyMult = input.float(0.8, "Displacement Body (ATR)", step=0.1, group=GRP_DET, tooltip="Min body size relative to ATR for displacement.")
+float dispAtrBodyMult = input.float(1.0, "Displacement Body (ATR)", step=0.1, group=GRP_DET, tooltip="Min body size relative to ATR for displacement. ICT: displacement should be clearly above-average. 1.0 = body equals ATR.")
 float dispBodyToRangeMin = input.float(0.6, "Displacement % of Range", step=0.05, group=GRP_DET, tooltip="Body must be this % of candle range.")
 bool useDisplacement = input.bool(true, "Require Displacement", group=GRP_DET, tooltip="Require strong impulse candle after OB.")
 bool useFVG = input.bool(true, "Require FVG", group=GRP_DET, tooltip="Require Fair Value Gap confirmation.")
@@ -221,9 +261,10 @@ string maxBlocksUser = input.string("Auto", "Max Active Blocks", options=["Auto"
 // ZONES & MITIGATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 string GRP_ZONE = "📏 Zones & Mitigation"
-float smartSizeAtrMult = input.float(1.2, "Smart Size (ATR)", step=0.1, group=GRP_ZONE, tooltip="Max zone height as ATR multiple for smart sizing.")
-string smartAnchor = input.string("Wick", "Zone Anchor", options=["Wick", "Close"], group=GRP_ZONE, tooltip="Anchor zone from wick or close price.")
-string mitigationMode = input.string("Auto", "Mitigation Mode", options=["Auto", "Wick", "Close", "Mean"], group=GRP_ZONE, tooltip="How to determine when OB is mitigated/invalidated.")
+string blockSizing = input.string("Full candle", "Block Sizing", options=["Full candle", "Body Only", "Smart"], group=GRP_ZONE, tooltip="FULL CANDLE: Zone spans entire candle wick-to-wick (ICT standard). BODY ONLY: Zone spans open-to-close only. SMART: Clips zone to ATR-based max height (compact but may distort boundaries).")
+float smartSizeAtrMult = input.float(1.2, "Smart Size (ATR)", step=0.1, group=GRP_ZONE, tooltip="Max zone height as ATR multiple for Smart sizing mode.")
+string smartAnchor = input.string("Wick", "Zone Anchor", options=["Wick", "Close"], group=GRP_ZONE, tooltip="Anchor zone from wick or close price (Smart sizing mode only).")
+string mitigationMode = input.string("Auto", "Mitigation Mode", options=["Auto", "Wick", "Close", "Mean"], group=GRP_ZONE, tooltip="How to determine when OB is mitigated/invalidated. AUTO: Consequent Encroachment (50% of OB) per ICT methodology. WICK/CLOSE/MEAN: Manual override.")
 float minPenZonePct = input.float(0.10, "Min Penetration (% Zone)", step=0.05, group=GRP_ZONE, tooltip="Min penetration beyond zone for mitigation.")
 float minPenAtrPct = input.float(0.05, "Min Penetration (% ATR)", step=0.01, group=GRP_ZONE, tooltip="Min penetration as ATR % for mitigation.")
 float meanMitigationLevel = input.float(0.5, "Mean Mitigation Level", step=0.1, group=GRP_ZONE, tooltip="0.5 = 50% into zone for Mean mitigation.")
@@ -231,6 +272,8 @@ string touchMode = input.string("Wick", "Touch Mode", options=["Wick", "Close"],
 string retestDebounce = input.string("Require exit before recount", "Retest Count Mode", options=["Require exit before recount", "Count each bar in zone"], group=GRP_ZONE, tooltip="How to count multiple touches/retests.")
 string rejectionCloseLevel = input.string("Mid", "Rejection Target", options=["Mid", "Top/Bottom", "Percent into zone"], group=GRP_ZONE, tooltip="Where price must close for rejection signal.")
 float rejectionPercent = input.float(0.5, "Rejection %", step=0.1, group=GRP_ZONE, tooltip="For 'Percent into zone' rejection mode.")
+bool useAgeDecay = input.bool(true, "OB Age Decay", group=GRP_ZONE, tooltip="ICT: Order blocks have a shelf life. Fresher OBs are more reliable. When enabled, OBs gradually lose strength if not retested within the decay window.")
+int ageDecayBars = input.int(0, "Decay Window (0=Auto)", minval=0, group=GRP_ZONE, tooltip="Bars before untested OB starts decaying. 0=auto-scale by timeframe.")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SCORING
@@ -278,14 +321,13 @@ int powerMinIntrabars = input.int(4, "Min Intrabars", minval=1, group=GRP_PWR, t
 bool showStrength = showLabels
 bool showVolLabel = showLabels
 bool proximityAlertEnabled = alertProximity
-bool alertOnlyStrongBlocks = true
+bool alertOnlyStrongBlocks = alertOnlyStrongInput
 bool alertOnlyFreshBlocks = false
-bool requireDirectionalApproach = true
+bool requireDirectionalApproach = alertDirectionalApproach
 bool alertLiquiditySweep = alertLiquidity
 bool alertLiquidityRun = alertLiquidity
 bool alertApproachingLiquidity = alertLiquidity
-string smartSizingAppliesTo = "Scalping only"
-string blockSizing = "Smart"
+// blockSizing is now a user input in GRP_ZONE (defaults to "Full candle" per ICT)
 
 // === EFFECTIVE PRESET DETERMINATION ===
 // Auto mode: derive preset from timeframe
@@ -318,10 +360,10 @@ if effectivePreset == "Scalping"
     actualLookback := 3
     dispMagnitude := 1.1
     actualMsbPeriod := 5
-    actualFVG := settingsMode == "Auto" ? false : useFVG  // Auto forces off for scalping
+    actualFVG := settingsMode == "Auto" ? true : useFVG  // ICT: FVG mandatory for valid OB
     actualMSB := true
     maxBlocks := 8
-    mitigationMethod := mitigationMode == "Auto" ? "Wick" : mitigationMode
+    mitigationMethod := mitigationMode == "Auto" ? "Mean" : mitigationMode  // ICT: CE (50%) mitigation
     // PERFORMANCE GUARDRAILS for scalping (Auto mode) - cap segments
     if settingsMode == "Auto"
         effectiveGridSegments := math.min(gridSegments, 5)  // Cap at 5 for speed
@@ -333,7 +375,7 @@ else if effectivePreset == "Swing"
     actualFVG := settingsMode == "Auto" ? true : useFVG
     actualMSB := true
     maxBlocks := 6
-    mitigationMethod := mitigationMode == "Auto" ? "Close" : mitigationMode
+    mitigationMethod := mitigationMode == "Auto" ? "Mean" : mitigationMode  // ICT: CE (50%) mitigation
     if settingsMode == "Auto"
         effectiveGridSegments := math.min(gridSegments, 8)  // Cap at 8 for balance
 else
@@ -354,6 +396,9 @@ else
 // User override for MSB lookback (only in Manual mode)
 if settingsMode == "Manual"
     actualMsbPeriod := msbLookback
+
+// === AGE DECAY AUTO-SCALING ===
+int effectiveDecayWindow = ageDecayBars > 0 ? ageDecayBars : (effectivePreset == "Scalping" ? 50 : effectivePreset == "Swing" ? 100 : 200)
 
 // === LIQUIDITY AUTO-SCALING ===
 // Cap maxLiquidityLevels in Auto mode for scalping to reduce object load
@@ -688,7 +733,15 @@ type OrderBlock
     int lastRetestCount     // For label rebuild check
     bool lastTouched
     bool lastRejected
+    string lastStrength     // For decay label rebuild check
     string formattedVol     // PERFORMANCE: Cached formatted volume string
+    // ICT age decay
+    int creationBar         // bar_index when OB was created
+    string originalStrength // Original strength before decay
+    // Scoring metadata (for core quality scoring)
+    float impulseStrength   // Normalized displacement body/ATR
+    bool hasFVG             // FVG confirmed at creation
+    bool hasMSB             // MSB confirmed at creation
 
 type LiquiditySweep
     line levelLine           // Horizontal line at swing high/low
@@ -820,11 +873,35 @@ string _htfTf = tf_in_minutes < 60 ? "240" : tf_in_minutes < 240 ? "D" : ""
 bool _needHtfData = showDashboard and tf_in_minutes < 240
 [htfClose, htfSma50] = request.security(syminfo.tickerid, _htfTf, [close, ta.sma(close, 50)], ignore_invalid_symbol=true)
 
-// Premium/Discount Zone Calculation (ICT concept)
-// Auto-scale lookback based on timeframe for optimal zone responsiveness
-int zoneLookback = is_scalping ? 30 : is_swing ? 50 : 80
-float zoneSwingHigh = ta.highest(high, zoneLookback)
-float zoneSwingLow = ta.lowest(low, zoneLookback)
+// Premium/Discount Zone: Swing-based Dealing Range (ICT concept)
+// Uses pivot detection to find the actual swing high/low defining the current range
+// instead of a simple rolling N-bar window
+int pdPivotLen = pdPivotLength > 0 ? pdPivotLength : (is_scalping ? 10 : is_swing ? 15 : 20)
+
+// Detect swing highs/lows via ta.pivothigh/ta.pivotlow (confirmed pivots)
+float pivotHigh = ta.pivothigh(high, pdPivotLen, pdPivotLen)
+float pivotLow = ta.pivotlow(low, pdPivotLen, pdPivotLen)
+
+// Track the dealing range with var (persists across bars, updates on new pivots)
+var float dealingRangeHigh = na
+var float dealingRangeLow = na
+
+// Update dealing range on new confirmed swing points
+if not na(pivotHigh)
+    dealingRangeHigh := pivotHigh
+if not na(pivotLow)
+    dealingRangeLow := pivotLow
+
+// Range expansion: if price breaks the dealing range, update to new extreme
+if not na(dealingRangeHigh) and high > dealingRangeHigh
+    dealingRangeHigh := high
+if not na(dealingRangeLow) and low < dealingRangeLow
+    dealingRangeLow := low
+
+// Fallback: use rolling window if no pivots detected yet (early bars)
+float zoneSwingHigh = not na(dealingRangeHigh) ? dealingRangeHigh : ta.highest(high, 50)
+float zoneSwingLow = not na(dealingRangeLow) ? dealingRangeLow : ta.lowest(low, 50)
+
 float zoneRange = zoneSwingHigh - zoneSwingLow
 float zoneEquilibrium = zoneSwingLow + zoneRange * 0.5
 bool inDiscount = close < zoneEquilibrium
@@ -842,50 +919,33 @@ max_bars_back(avgBody, 600)
 
 // Displacement checks are inlined in checkScalperCondition to avoid Pine consistency warnings.
 
-// Alert flags
-var bool newBullOB = false
-var bool newBearOB = false
-var bool bullTouch = false
-var bool bearTouch = false
-var bool bullReject = false
-// Anti-spam latch for OB Touch alerts - persist across bars (NOT reset each bar)
+// Per-bar event flags (non-var: auto-reset to false each bar)
+bool newBullOB = false
+bool newBearOB = false
+bool bullReject = false
+bool bearReject = false
+bool nearBullOB = false
+bool nearBearOB = false
+bool bullSweepDetected = false
+bool bearSweepDetected = false
+bool bullRunDetected = false
+bool bearRunDetected = false
+bool nearBSL = false
+bool nearSSL = false
+bool bullMitigated = false
+bool bearMitigated = false
+bool bullDecayed = false
+bool bearDecayed = false
+
+// Anti-spam latches (var: persist across bars for edge-trigger detection)
 var bool wasInBullOB = false
 var bool wasInBearOB = false
-var bool bearReject = false
-
-// Proximity alert flags
-var bool nearBullOB = false
-var bool nearBearOB = false
-var bool wasNearBullOB = false  // State tracking to prevent spam
+var bool wasNearBullOB = false
 var bool wasNearBearOB = false
-
-// Liquidity sweep alert flags
-var bool bullSweepDetected = false
-var bool bearSweepDetected = false
-var bool bullRunDetected = false
-var bool bearRunDetected = false
-var bool nearBSL = false
-var bool nearSSL = false
-// Anti-spam latch for proximity alerts - persist across bars (NOT reset each bar)
 var bool wasNearBSL = false
 var bool wasNearSSL = false
 
 bool showAnyLabel = showVolLabel or showStrength or showRetests
-
-newBullOB := false
-newBearOB := false
-bullTouch := false
-bearTouch := false
-bullReject := false
-bearReject := false
-nearBullOB := false
-nearBearOB := false
-bullSweepDetected := false
-bearSweepDetected := false
-bullRunDetected := false
-bearRunDetected := false
-nearBSL := false
-nearSSL := false
 
 // === VALIDATION FUNCTIONS ===
 checkDisplacement(int idx, float threshold) =>
@@ -966,6 +1026,52 @@ checkFVG(int idx, string dir) =>
             if fvgMinGapAtr > 0.0 and hasGap
                 meetsMinGap := gapSize > atr[idx] * fvgMinGapAtr
 
+            hasGap and meetsMinGap
+
+// Scalper FVG: checks gap between continuation candle (after impulse) and OB candle
+// Unlike checkFVG which assumes fixed idx offsets, this accepts explicit impulse/OB indices
+// Bullish FVG: continuation candle's low > OB candle's high (gap up)
+// Bearish FVG: continuation candle's high < OB candle's low (gap down)
+checkScalperFVG(int impulseIdx, int obIdx, string dir) =>
+    if fvgMode == "Off"
+        true
+    else if impulseIdx < 1 or obIdx > bar_index
+        false
+    else
+        int contIdx = impulseIdx - 1  // bar after impulse (closer to current bar)
+        if contIdx < 0
+            false
+        else
+            bool hasGap = false
+            float gapSize = 0.0
+            if dir == "Bull"
+                if fvgMode == "Strict (body gap)"
+                    float recentLow = math.min(close[contIdx], open[contIdx])
+                    float oldHigh = math.max(close[obIdx], open[obIdx])
+                    hasGap := recentLow > oldHigh
+                    gapSize := hasGap ? recentLow - oldHigh : 0.0
+                else if fvgMode == "Loose (wick gap)"
+                    hasGap := low[contIdx] >= high[obIdx]
+                    gapSize := hasGap ? low[contIdx] - high[obIdx] : 0.0
+                else  // Classic
+                    hasGap := low[contIdx] > high[obIdx]
+                    gapSize := hasGap ? low[contIdx] - high[obIdx] : 0.0
+            else  // Bear
+                if fvgMode == "Strict (body gap)"
+                    float recentHigh = math.max(close[contIdx], open[contIdx])
+                    float oldLow = math.min(close[obIdx], open[obIdx])
+                    hasGap := recentHigh < oldLow
+                    gapSize := hasGap ? oldLow - recentHigh : 0.0
+                else if fvgMode == "Loose (wick gap)"
+                    hasGap := high[contIdx] <= low[obIdx]
+                    gapSize := hasGap ? low[obIdx] - high[contIdx] : 0.0
+                else  // Classic
+                    hasGap := high[contIdx] < low[obIdx]
+                    gapSize := hasGap ? low[obIdx] - high[contIdx] : 0.0
+
+            bool meetsMinGap = true
+            if fvgMinGapAtr > 0.0 and hasGap
+                meetsMinGap := gapSize > atr[obIdx] * fvgMinGapAtr
             hasGap and meetsMinGap
 
 checkMSB(int pivotIdx, int dispIdx, int lookback, string dir) =>
@@ -1328,74 +1434,100 @@ getCryptoScoreBoost(bool isBullOB, int barOffset) =>
 
         boost
 
-getStrength(float vol, float body, bool trendAlign, bool isBullOB, int barOffset, int ictContextBoost) =>
-    int score = 0
-    if useVolume and vol > avgVol * volScoreMult
-        score += 1
-    if body > avgBody * bodyScoreMult
-        score += 1
-    if trendAlign
-        score += 1
+// v5.1: Restructured scoring — core OB quality (Tier 1) vs context bonus (Tier 2)
+// ICT: An OB's quality comes from displacement strength, FVG, MSB, volume, and freshness.
+// Session/zone/crypto are context factors that can boost but not carry a weak OB to Elite.
+getStrength(float vol, float body, bool trendAlign, bool isBullOB, int barOffset, int ictContextBoost, float impStr, bool fvgOk, bool msbOk) =>
+    // === TIER 1: Core OB Quality (what makes a real ICT order block) ===
+    int coreScore = 0
 
-    // Add crypto boost
-    score += getCryptoScoreBoost(isBullOB, barOffset)
+    // Displacement strength (impulse body / ATR)
+    if impStr >= 1.5
+        coreScore += 2  // Strong displacement
+    else if impStr >= 1.0
+        coreScore += 1  // Decent displacement
 
-    // Add ICT context boost (v5.0: session, zone, sweep factors)
-    score += ictContextBoost
+    // FVG confirmation (+2, critical for ICT)
+    if fvgOk
+        coreScore += 2
 
-    // Adaptive thresholds: when ICT context features are enabled, Elite requires
-    // BOTH technical quality AND ICT context alignment
-    bool ictFeaturesActive = useSessionScoring or useZoneScoring or useSweepLinkage
-    int eliteThresh = ictFeaturesActive ? 4 : 3
+    // MSB confirmation (+1)
+    if msbOk
+        coreScore += 1
 
-    score >= eliteThresh ? "Elite" : score >= 2 ? "Strong" : score >= 1 ? "Mid" : "Weak"
-
-getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentration, bool isBullOB, int barOffset, int ictContextBoost) =>
-    int score = 0
-
-    // Volume confirmation check (ICT: volume spike essential for institutional OBs)
+    // Volume spike (+1)
     bool hasVolumeConfirmation = useVolume and vol > avgVol * volScoreMult
-
-    // Base scoring (user-configurable)
     if hasVolumeConfirmation
-        score += 1
+        coreScore += 1
+
+    // === TIER 2: Context Bonus (capped at +3 to prevent inflation) ===
+    int contextScore = 0
+    contextScore += ictContextBoost
+    contextScore += getCryptoScoreBoost(isBullOB, barOffset)
     if body > avgBody * bodyScoreMult
-        score += 1
+        contextScore += 1
     if trendAlign
-        score += 1
+        contextScore += 1
+    int cappedContext = math.min(contextScore, 3)
 
-    // Crypto boost (optional module)
-    score += getCryptoScoreBoost(isBullOB, barOffset)
+    int totalScore = coreScore + cappedContext
 
-    // Volume Profile boost (Premium feature - user-configurable)
+    // Elite requires strong core AND volume
+    bool volumeOkForElite = not eliteRequiresVolume or hasVolumeConfirmation
+    if coreScore >= 4 and totalScore >= 6 and volumeOkForElite
+        "Elite"
+    else if coreScore >= 3 and totalScore >= 4
+        "Strong"
+    else if coreScore >= 1 and totalScore >= 2
+        "Mid"
+    else
+        "Weak"
+
+getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentration, bool isBullOB, int barOffset, int ictContextBoost, float impStr, bool fvgOk, bool msbOk) =>
+    // === TIER 1: Core OB Quality ===
+    int coreScore = 0
+
+    if impStr >= 1.5
+        coreScore += 2
+    else if impStr >= 1.0
+        coreScore += 1
+
+    if fvgOk
+        coreScore += 2
+
+    if msbOk
+        coreScore += 1
+
+    bool hasVolumeConfirmation = useVolume and vol > avgVol * volScoreMult
+    if hasVolumeConfirmation
+        coreScore += 1
+
+    // === TIER 2: Context Bonus (capped at +3) ===
+    int contextScore = 0
+    contextScore += ictContextBoost
+    contextScore += getCryptoScoreBoost(isBullOB, barOffset)
     bool hasVPConfirmation = useVolumeProfile and vpConcentration >= vpThreshold
     if hasVPConfirmation
-        score += vpScoreBoost
+        contextScore += vpScoreBoost
+    if body > avgBody * bodyScoreMult
+        contextScore += 1
+    if trendAlign
+        contextScore += 1
+    int cappedContext = math.min(contextScore, 3)
 
-    // ICT context boost (v5.0: session + zone + OTE + sweep factors)
-    score += ictContextBoost
+    int totalScore = coreScore + cappedContext
 
-    // Enhanced rating with VP (user can configure if Elite requires VP and/or Volume)
-    // ICT methodology: Elite status should require volume confirmation
     bool volumeOkForElite = not eliteRequiresVolume or hasVolumeConfirmation
     bool vpOkForElite = not eliteRequiresVP or hasVPConfirmation
 
-    // Adaptive thresholds: when ICT context features are enabled,
-    // Elite requires BOTH technical quality AND ICT context alignment
-    // This prevents OBs from reaching Elite on base factors alone when ICT scoring is active
-    bool ictFeaturesActive = useSessionScoring or useZoneScoring or useSweepLinkage
-    int eliteThresh = ictFeaturesActive ? 5 : 3
-
-    if useVolumeProfile
-        if score >= eliteThresh and volumeOkForElite and vpOkForElite
-            "Elite"
-        else
-            score >= 3 ? "Strong" : score >= 1 ? "Mid" : "Weak"
+    if coreScore >= 4 and totalScore >= 6 and volumeOkForElite and vpOkForElite
+        "Elite"
+    else if coreScore >= 3 and totalScore >= 4
+        "Strong"
+    else if coreScore >= 1 and totalScore >= 2
+        "Mid"
     else
-        if score >= eliteThresh and volumeOkForElite
-            "Elite"
-        else
-            score >= 3 ? "Strong" : score >= 1 ? "Mid" : "Weak"
+        "Weak"
 
 // === PROXIMITY ALERT HELPER ===
 findNearestOB(array<OrderBlock> blocks, bool isBull) =>
@@ -1556,6 +1688,16 @@ checkScalperCondition(int tuning) =>
                 bearOBIdx := candidateIdx
                 bearOB := true
                 break
+
+    // === FVG VALIDATION (v5.1: mandatory for ICT compliance) ===
+    // Displacement MUST leave a Fair Value Gap to validate institutional intent
+    if bullOB and actualFVG
+        if not checkScalperFVG(bullImpulseIdx, bullOBIdx, "Bull")
+            bullOB := false
+
+    if bearOB and actualFVG
+        if not checkScalperFVG(bearImpulseIdx, bearOBIdx, "Bear")
+            bearOB := false
 
     // === MICRO-SWEEP VALIDATION (v5.0) ===
     // ICT: OB candle must sweep prior candle's H/L (candle-level liquidity grab)
@@ -1786,11 +1928,12 @@ deleteBlock(OrderBlock block) =>
 
 // PERFORMANCE OPTIMIZED: Combined single-pass processing
 // Merges processBlocks + updateBlocks + isInAnyBlock into ONE iteration
-// Returns: [touched, rejected, isInAny]
+// Returns: [rejected, isInAny, anyMitigated, anyDecayed]
 processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int currentTime) =>
-    bool touched = false
     bool rejected = false
     bool isInAny = false
+    bool anyMitigated = false
+    bool anyDecayed = false
 
     int blockCount = array.size(blocks)
     if blockCount > 0
@@ -1839,9 +1982,33 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
 
                 if mitigated
                     block.mitigated := true
+                    anyMitigated := true
                     deleteBlock(block)
                     array.remove(blocks, i)
                     continue
+
+                // --- AGE DECAY CHECK (ICT: OBs have a shelf life) ---
+                if useAgeDecay and not na(block.creationBar)
+                    int age = bar_index - block.creationBar
+                    // Retests reset the relevance clock
+                    int relevantAge = block.retestCount > 0 ? (bar_index - block.lastUpdateBar) : age
+                    string decayedStrength = block.originalStrength
+                    if relevantAge > effectiveDecayWindow * 2
+                        // Very stale: downgrade by 2 tiers
+                        decayedStrength := block.originalStrength == "Elite" ? "Mid" : "Weak"
+                    else if relevantAge > effectiveDecayWindow
+                        // Aging: downgrade by 1 tier
+                        decayedStrength := block.originalStrength == "Elite" ? "Strong" : block.originalStrength == "Strong" ? "Mid" : block.originalStrength == "Mid" ? "Weak" : "Weak"
+                    // Only flag decay when strength actually changes
+                    if decayedStrength != block.strength
+                        anyDecayed := true
+                    block.strength := decayedStrength
+                    // Auto-remove decayed blocks below display threshold
+                    if showOnlyStrongElite and (block.strength == "Weak" or block.strength == "Mid")
+                        block.mitigated := true
+                        deleteBlock(block)
+                        array.remove(blocks, i)
+                        continue
 
                 // --- TOUCH/ZONE CHECK (also computes isInAny) ---
                 bool inZone = useWickMode ? (low <= block.top and high >= block.bot) : (close >= block.bot and close <= block.top)
@@ -1852,14 +2019,19 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
                         if not block.touched
                             block.touched := true
                             block.retestCount += 1
-                            touched := true
                     else  // "Count each bar in zone"
                         block.retestCount += 1
-                        touched := true
                         block.touched := true
                 else
                     if block.touched
                         block.touched := false
+
+                // --- REJECTION RE-ARM ---
+                // Re-arm when price completely leaves zone (no wick overlap)
+                // so a new rejection can fire on the next approach
+                bool priceCompletelyAway = low > block.top or high < block.bot
+                if priceCompletelyAway and block.rejected
+                    block.rejected := false
 
                 // --- REJECTION CHECK ---
                 if enableRejection
@@ -1885,7 +2057,7 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
 
                 // --- LABEL UPDATE (only on state change) ---
                 if showAnyLabel and not na(block.volLabel)
-                    bool stateChanged = block.retestCount != block.lastRetestCount or block.touched != block.lastTouched or block.rejected != block.lastRejected
+                    bool stateChanged = block.retestCount != block.lastRetestCount or block.touched != block.lastTouched or block.rejected != block.lastRejected or block.strength != block.lastStrength
                     if stateChanged
                         float labelY = block.top - (block.top - block.bot) * 0.25
                         label.set_y(block.volLabel, labelY)
@@ -1893,21 +2065,22 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
                         block.lastRetestCount := block.retestCount
                         block.lastTouched := block.touched
                         block.lastRejected := block.rejected
+                        block.lastStrength := block.strength
 
-    [touched, rejected, isInAny]
+    [rejected, isInAny, anyMitigated, anyDecayed]
 
 trimBlocks(array<OrderBlock> blocks, int maxCount) =>
     if array.size(blocks) > maxCount
         deleteBlock(array.shift(blocks))
 
-createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCreate, bool microSweep) =>
+createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCreate, bool microSweep, float impStr, bool fvgOk, bool msbOk) =>
     bool created = false
     if shouldCreate and idx > 0 and idx <= bar_index
         float top = high[idx]
         float bot = low[idx]
 
-        // Smart sizing - now configurable with ICT-aligned anchoring
-        bool applySmartSizing = blockSizing == "Smart" and (smartSizingAppliesTo == "All timeframes" or is_scalping)
+        // Zone sizing: Full candle (ICT default), Body Only, or Smart (ATR-clipped)
+        bool applySmartSizing = blockSizing == "Smart"
         if applySmartSizing
             float minZoneHeight = syminfo.mintick
             float safeAtr = na(atr) ? math.max(high[idx] - low[idx], minZoneHeight) : atr
@@ -1941,8 +2114,8 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
 
         // Enhanced strength with VP, crypto boost, and ICT context
         string strength = useVolumeProfile ?
-             getEnhancedStrength(vol, body, aligned, vpConcentration, isBull, idx, ictBoost) :
-             getStrength(vol, body, aligned, isBull, idx, ictBoost)
+             getEnhancedStrength(vol, body, aligned, vpConcentration, isBull, idx, ictBoost, impStr, fvgOk, msbOk) :
+             getStrength(vol, body, aligned, isBull, idx, ictBoost, impStr, fvgOk, msbOk)
 
         // Filter: Skip weak/mid blocks if only showing Strong/Elite
         bool skipNewBlock = showOnlyStrongElite and strength != "Strong" and strength != "Elite"
@@ -1987,7 +2160,9 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
                  array.new<box>(), na, na, na, na, array.new<box>(),  // volumeBoxes, lines, fill, label, corners
                  top, bot, direction,
                  vol, relVol, strength, false, 0, false, false,
-                 na, 0, false, false, fmtVol)  // State tracking + cached formattedVol
+                 na, 0, false, false, strength, fmtVol,  // State tracking (lastStrength=strength initially)
+                 bar_index - idx, strength,               // creationBar, originalStrength
+                 impStr, fvgOk, msbOk)                    // scoring metadata
 
             box[] volBoxes = createVolumeGradient(newBlock, leftBar, effectiveGridSegments, effectiveRenderMode)
             newBlock.volumeBoxes := volBoxes
@@ -2207,6 +2382,9 @@ bool detectedBearMicroSweep = false
 // v5.0: Institutional method OB indices (may differ from pivot index)
 int instBullOBIdx = 0
 int instBearOBIdx = 0
+// v5.1: Track impulse strength for core quality scoring
+float scalperBullImpStr = 0.0
+float scalperBearImpStr = 0.0
 
 // === PERFORMANCE: Skip detection on intrabar ticks in Confirmed mode ===
 // OBs only form on bar close, so detection calculations are wasted on every tick
@@ -2235,18 +2413,20 @@ if shouldRunDetection and detectionMethod == "Institutional"
 if shouldRunDetection and detectionMethod == "Scalper"
     // === SCALPER DETECTION (ICT/SMC Method - Candle immediately before impulse) ===
     // v5.0: Expanded tuple with micro-sweep flags
-    [scalperBear, scalperBull, bearIdx, bullIdx, bearImpStr, bullImpStr, bearMS, bullMS] = checkScalperCondition(scalperLookback)
+    [scalperBear, scalperBull, bearIdx2, bullIdx2, bearImpStr2, bullImpStr2, bearMS, bullMS] = checkScalperCondition(scalperLookback)
     validBull := scalperBull
     validBear := scalperBear
-    scalperBullIdx := bullIdx
-    scalperBearIdx := bearIdx
+    scalperBullIdx := bullIdx2
+    scalperBearIdx := bearIdx2
+    scalperBullImpStr := bullImpStr2
+    scalperBearImpStr := bearImpStr2
     detectedBullMicroSweep := bullMS
     detectedBearMicroSweep := bearMS
 
     // Mutual exclusivity: if both trigger, pick the one with stronger IMPULSE candle
     if validBull and validBear
         // Compare impulse candle strength (not OB candle)
-        if bullImpStr >= bearImpStr
+        if scalperBullImpStr >= scalperBearImpStr
             validBear := false
         else
             validBull := false
@@ -2363,44 +2543,82 @@ bool shouldCreateBear = barstate.isconfirmed and validBear
 // v5.0: Institutional method uses the found opposite candle, not the pivot
 int bullIdx = detectionMethod == "Scalper" ? scalperBullIdx : instBullOBIdx
 int bearIdx = detectionMethod == "Scalper" ? scalperBearIdx : instBearOBIdx
-newBullOB := createOrderBlock(bullIdx, true, bullBlocks, shouldCreateBull, detectedBullMicroSweep)
-newBearOB := createOrderBlock(bearIdx, false, bearBlocks, shouldCreateBear, detectedBearMicroSweep)
+
+// v5.1: Compute per-OB scoring metadata for core quality scoring
+float bullImpStr = 0.0
+float bearImpStr = 0.0
+bool bullFVGOk = false
+bool bearFVGOk = false
+bool bullMSBOk = false
+bool bearMSBOk = false
+
+if detectionMethod == "Scalper"
+    bullImpStr := scalperBullImpStr
+    bearImpStr := scalperBearImpStr
+    // Scalper FVG/MSB: FVG was gated in checkScalperCondition, MSB checked here
+    bullFVGOk := actualFVG and validBull  // True only if FVG was required AND passed
+    bearFVGOk := actualFVG and validBear
+    if actualMSB and validBull
+        bullMSBOk := checkMSB(scalperBullIdx, scalperBullIdx > 0 ? scalperBullIdx - 1 : 0, actualMsbPeriod, "Bull")
+    if actualMSB and validBear
+        bearMSBOk := checkMSB(scalperBearIdx, scalperBearIdx > 0 ? scalperBearIdx - 1 : 0, actualMsbPeriod, "Bear")
+else
+    // Institutional: compute impulse strength from displacement candle
+    if validBull and actualLookback >= 1
+        float _body = math.abs(close[actualLookback - 1] - open[actualLookback - 1])
+        bullImpStr := atr[actualLookback - 1] > 0 ? _body / atr[actualLookback - 1] : 0.0
+    if validBear and actualLookback >= 1
+        float _body = math.abs(close[actualLookback - 1] - open[actualLookback - 1])
+        bearImpStr := atr[actualLookback - 1] > 0 ? _body / atr[actualLookback - 1] : 0.0
+    bullFVGOk := hasBullFVG
+    bearFVGOk := hasBearFVG
+    bullMSBOk := hasBullMSB
+    bearMSBOk := hasBearMSB
+
+newBullOB := createOrderBlock(bullIdx, true, bullBlocks, shouldCreateBull, detectedBullMicroSweep, bullImpStr, bullFVGOk, bullMSBOk)
+newBearOB := createOrderBlock(bearIdx, false, bearBlocks, shouldCreateBear, detectedBearMicroSweep, bearImpStr, bearFVGOk, bearMSBOk)
 
 // === UPDATE & MITIGATION (OPTIMIZED: Single-pass processing) ===
 // PERFORMANCE: Combined update + process + isInAny check into single iteration
 // Reduces 5 array iterations to 2 (one per side)
-[bullTouchTmp, bullRejectTmp, inBullOBNow] = processAndUpdateBlocks(bullBlocks, true, effectiveGridSegments, time)
-bullTouch := bullTouchTmp
-bullReject := bullRejectTmp
-[bearTouchTmp, bearRejectTmp, inBearOBNow] = processAndUpdateBlocks(bearBlocks, false, effectiveGridSegments, time)
-bearTouch := bearTouchTmp
-bearReject := bearRejectTmp
+[bullRejectTmp, inBullOBNow, bullMitigatedTmp, bullDecayedTmp] = processAndUpdateBlocks(bullBlocks, true, effectiveGridSegments, time)
+[bearRejectTmp, inBearOBNow, bearMitigatedTmp, bearDecayedTmp] = processAndUpdateBlocks(bearBlocks, false, effectiveGridSegments, time)
 
-// === OB TOUCH ANTI-SPAM LATCH ===
-// inBullOBNow and inBearOBNow now come from the combined function above
+// === SIGNAL TIMING GATE ===
+// In "Confirmed" mode, only update alert state on bar close to prevent intrabar flicker
+bool shouldUpdateAlertState = signalTiming == "Realtime (intrabar)" or barstate.isconfirmed
 
-// Edge-trigger: fire alert only on FIRST entry into any OB zone of that side
-bool bullTouchTrigger = inBullOBNow and not wasInBullOB
-bool bearTouchTrigger = inBearOBNow and not wasInBearOB
+// === OB TOUCH ANTI-SPAM LATCH (gated by signal timing) ===
+bool bullTouchTrigger = shouldUpdateAlertState and inBullOBNow and not wasInBullOB
+bool bearTouchTrigger = shouldUpdateAlertState and inBearOBNow and not wasInBearOB
 
-// Update latch state (must persist across bars, NOT reset each bar)
-wasInBullOB := inBullOBNow
-wasInBearOB := inBearOBNow
+// === REJECTION (gated by signal timing) ===
+bullReject := shouldUpdateAlertState ? bullRejectTmp : false
+bearReject := shouldUpdateAlertState ? bearRejectTmp : false
 
-// === PROXIMITY ALERT DETECTION ===
+// === MITIGATION (gated by signal timing) ===
+bullMitigated := shouldUpdateAlertState ? bullMitigatedTmp : false
+bearMitigated := shouldUpdateAlertState ? bearMitigatedTmp : false
+
+// === DECAY (gated by signal timing) ===
+bullDecayed := shouldUpdateAlertState ? bullDecayedTmp : false
+bearDecayed := shouldUpdateAlertState ? bearDecayedTmp : false
+
+// Update latch state (only on confirmed state to prevent intrabar flicker)
+if shouldUpdateAlertState
+    wasInBullOB := inBullOBNow
+    wasInBearOB := inBearOBNow
+
+// === PROXIMITY ALERT DETECTION (gated by signal timing) ===
 if proximityAlertEnabled
-    // Find nearest qualifying OB zones
     [nearBull, _distBull] = findNearestOB(bullBlocks, true)
     [nearBear, _distBear] = findNearestOB(bearBlocks, false)
-
-    // Trigger alert only on state change (entering proximity range)
-    // This prevents spam - only alerts once when first entering the zone
-    nearBullOB := nearBull and not wasNearBullOB
-    nearBearOB := nearBear and not wasNearBearOB
-
-    // Update state for next bar
-    wasNearBullOB := nearBull
-    wasNearBearOB := nearBear
+    // Edge-trigger with signal timing gate
+    nearBullOB := shouldUpdateAlertState and nearBull and not wasNearBullOB
+    nearBearOB := shouldUpdateAlertState and nearBear and not wasNearBearOB
+    if shouldUpdateAlertState
+        wasNearBullOB := nearBull
+        wasNearBearOB := nearBear
 
 // Memory management (user-configurable)
 int effectiveMaxBlocks = maxBlocks
@@ -2455,22 +2673,13 @@ if shouldRunLiquidity
         nearBSL := checkLiquidityProximity(bslLevels, true)
         nearSSL := checkLiquidityProximity(sslLevels, false)
 
-// === LIQUIDITY PROXIMITY ANTI-SPAM LATCH ===
-// Edge-trigger: fire alert only on FIRST entry into proximity zone
-// Re-arm when price exits the zone
-bool triggerNearBSL = nearBSL and not wasNearBSL
-bool triggerNearSSL = nearSSL and not wasNearSSL
+// === LIQUIDITY PROXIMITY ANTI-SPAM LATCH (gated by signal timing) ===
+bool triggerNearBSL = shouldUpdateAlertState and nearBSL and not wasNearBSL
+bool triggerNearSSL = shouldUpdateAlertState and nearSSL and not wasNearSSL
 
-// Update latch state (must persist across bars, NOT reset each bar)
-if nearBSL
-    wasNearBSL := true
-else
-    wasNearBSL := false  // Re-arm when price exits proximity
-
-if nearSSL
-    wasNearSSL := true
-else
-    wasNearSSL := false  // Re-arm when price exits proximity
+if shouldUpdateAlertState
+    wasNearBSL := nearBSL
+    wasNearSSL := nearSSL
 
 // === DASHBOARD ===
 // Helper function to map location string to position enum
@@ -2708,37 +2917,87 @@ if showDashboard and barstate.islast
         table.cell(dashboard, 6, sessionDetailRow, "", text_size=dashTextSize, width=0)
 
 // === ALERTS ===
-// Note: alertcondition must be at global scope
-// Gate conditions with granular alert flags
-alertcondition(alertNewOB and newBullOB, "New Bullish Order Block", "🟢 New Bull OB detected on {{ticker}} {{interval}}")
-alertcondition(alertNewOB and newBearOB, "New Bearish Order Block", "🔴 New Bear OB detected on {{ticker}} {{interval}}")
-// Touch alerts are edge-triggered: fires once per entry, re-arms when price exits all zones of that side
-alertcondition(alertTouch and bullTouchTrigger, "Price in Bull Zone", "💚 Price testing Bull OB on {{ticker}} {{interval}}")
-alertcondition(alertTouch and bearTouchTrigger, "Price in Bear Zone", "❤️ Price testing Bear OB on {{ticker}} {{interval}}")
-alertcondition(alertReject and bullReject, "Bull Zone Rejection", "🚀 Rejection from Bull OB on {{ticker}} {{interval}} - Potential LONG")
-alertcondition(alertReject and bearReject, "Bear Zone Rejection", "💥 Rejection from Bear OB on {{ticker}} {{interval}} - Potential SHORT")
+// Alert frequency: match signal timing mode
+string alertFreq = signalTiming == "Confirmed (bar close)" ? alert.freq_once_per_bar_close : alert.freq_once_per_bar
 
-// Proximity Alerts - advance warning before price reaches zones
-alertcondition(proximityAlertEnabled and nearBullOB, "Approaching Bull OB", "⚠️ Price approaching BULLISH Order Block on {{ticker}} {{interval}} - Prepare LONG setup")
-alertcondition(proximityAlertEnabled and nearBearOB, "Approaching Bear OB", "⚠️ Price approaching BEARISH Order Block on {{ticker}} {{interval}} - Prepare SHORT setup")
+// --- Dynamic alert() calls (rich messages with runtime data) ---
+// New OB — include strength, price range, and volume
+if alertNewOB and newBullOB and array.size(bullBlocks) > 0
+    OrderBlock b = array.last(bullBlocks)
+    alert("BULL OB " + b.strength + " | " + str.tostring(round2(b.bot)) + "-" + str.tostring(round2(b.top)) + " | Vol:" + b.formattedVol + " | RVOL:" + str.tostring(round2(b.relativeVol)) + "x | {{ticker}} {{interval}}", alertFreq)
+if alertNewOB and newBearOB and array.size(bearBlocks) > 0
+    OrderBlock b = array.last(bearBlocks)
+    alert("BEAR OB " + b.strength + " | " + str.tostring(round2(b.top)) + "-" + str.tostring(round2(b.bot)) + " | Vol:" + b.formattedVol + " | RVOL:" + str.tostring(round2(b.relativeVol)) + "x | {{ticker}} {{interval}}", alertFreq)
+
+// Touch — edge-triggered entry into any OB zone
+if alertTouch and bullTouchTrigger
+    alert("Price testing BULL OB zone | Close:" + str.tostring(round2(close)) + " | {{ticker}} {{interval}}", alertFreq)
+if alertTouch and bearTouchTrigger
+    alert("Price testing BEAR OB zone | Close:" + str.tostring(round2(close)) + " | {{ticker}} {{interval}}", alertFreq)
+
+// Rejection — wick rejection with re-arm
+if alertReject and bullReject
+    alert("BULL OB REJECTION | Close:" + str.tostring(round2(close)) + " | Potential LONG | {{ticker}} {{interval}}", alertFreq)
+if alertReject and bearReject
+    alert("BEAR OB REJECTION | Close:" + str.tostring(round2(close)) + " | Potential SHORT | {{ticker}} {{interval}}", alertFreq)
+
+// Proximity — approaching OB zone
+if proximityAlertEnabled and nearBullOB
+    alert("Approaching BULL OB | Close:" + str.tostring(round2(close)) + " | {{ticker}} {{interval}}", alertFreq)
+if proximityAlertEnabled and nearBearOB
+    alert("Approaching BEAR OB | Close:" + str.tostring(round2(close)) + " | {{ticker}} {{interval}}", alertFreq)
+
+// Mitigation — OB invalidated by price
+if alertMitigated and bullMitigated
+    alert("BULL OB MITIGATED | Price broke through zone | {{ticker}} {{interval}}", alertFreq)
+if alertMitigated and bearMitigated
+    alert("BEAR OB MITIGATED | Price broke through zone | {{ticker}} {{interval}}", alertFreq)
+
+// Decay — strength downgrade due to age
+if alertDecayed and bullDecayed
+    alert("BULL OB DECAYED | Strength downgraded | {{ticker}} {{interval}}", alertFreq)
+if alertDecayed and bearDecayed
+    alert("BEAR OB DECAYED | Strength downgraded | {{ticker}} {{interval}}", alertFreq)
+
+// Liquidity sweeps/runs
+if enableLiquidity and alertLiquiditySweep and bullSweepDetected
+    alert("Bullish sweep - SSL taken | Close:" + str.tostring(round2(close)) + " | Potential LONG | {{ticker}} {{interval}}", alertFreq)
+if enableLiquidity and alertLiquiditySweep and bearSweepDetected
+    alert("Bearish sweep - BSL taken | Close:" + str.tostring(round2(close)) + " | Potential SHORT | {{ticker}} {{interval}}", alertFreq)
+if enableLiquidity and alertLiquidityRun and bearRunDetected
+    alert("BSL Run - Upside continuation | {{ticker}} {{interval}}", alertFreq)
+if enableLiquidity and alertLiquidityRun and bullRunDetected
+    alert("SSL Run - Downside continuation | {{ticker}} {{interval}}", alertFreq)
+if enableLiquidity and alertApproachingLiquidity and triggerNearBSL
+    alert("Approaching buy-side liquidity (BSL) | {{ticker}} {{interval}}", alertFreq)
+if enableLiquidity and alertApproachingLiquidity and triggerNearSSL
+    alert("Approaching sell-side liquidity (SSL) | {{ticker}} {{interval}}", alertFreq)
+
+// --- Static alertcondition() calls (backward compatibility) ---
+// Note: alertcondition must be at global scope
+alertcondition(alertNewOB and newBullOB, "New Bullish Order Block", "New Bull OB detected on {{ticker}} {{interval}}")
+alertcondition(alertNewOB and newBearOB, "New Bearish Order Block", "New Bear OB detected on {{ticker}} {{interval}}")
+alertcondition(alertTouch and bullTouchTrigger, "Price in Bull Zone", "Price testing Bull OB on {{ticker}} {{interval}}")
+alertcondition(alertTouch and bearTouchTrigger, "Price in Bear Zone", "Price testing Bear OB on {{ticker}} {{interval}}")
+alertcondition(alertReject and bullReject, "Bull Zone Rejection", "Rejection from Bull OB on {{ticker}} {{interval}} - Potential LONG")
+alertcondition(alertReject and bearReject, "Bear Zone Rejection", "Rejection from Bear OB on {{ticker}} {{interval}} - Potential SHORT")
+alertcondition(proximityAlertEnabled and nearBullOB, "Approaching Bull OB", "Price approaching Bull OB on {{ticker}} {{interval}}")
+alertcondition(proximityAlertEnabled and nearBearOB, "Approaching Bear OB", "Price approaching Bear OB on {{ticker}} {{interval}}")
+
+// Mitigation + Decay (new)
+alertcondition(alertMitigated and bullMitigated, "Bull OB Mitigated", "Bull OB mitigated on {{ticker}} {{interval}}")
+alertcondition(alertMitigated and bearMitigated, "Bear OB Mitigated", "Bear OB mitigated on {{ticker}} {{interval}}")
+alertcondition(alertDecayed and bullDecayed, "Bull OB Decayed", "Bull OB strength decayed on {{ticker}} {{interval}}")
+alertcondition(alertDecayed and bearDecayed, "Bear OB Decayed", "Bear OB strength decayed on {{ticker}} {{interval}}")
 
 // === LIQUIDITY SWEEP ALERTS ===
-// All liquidity alerts gated by enableLiquidity master toggle
-// Liquidity Sweep Alerts
 alertcondition(enableLiquidity and alertLiquiditySweep and bullSweepDetected, "Bullish Liquidity Sweep", "Bullish sweep on {{ticker}} {{interval}} - SSL taken, potential LONG")
 alertcondition(enableLiquidity and alertLiquiditySweep and bearSweepDetected, "Bearish Liquidity Sweep", "Bearish sweep on {{ticker}} {{interval}} - BSL taken, potential SHORT")
-
-// Liquidity Run Alerts (continuation after taking liquidity)
-// BSL Run = price took buy-side liquidity (highs) and continued UP
-// SSL Run = price took sell-side liquidity (lows) and continued DOWN
-alertcondition(enableLiquidity and alertLiquidityRun and bearRunDetected, "BSL Run (Upside Continuation)", "Price took buy-side liquidity (BSL) on {{ticker}} {{interval}} and continued higher")
-alertcondition(enableLiquidity and alertLiquidityRun and bullRunDetected, "SSL Run (Downside Continuation)", "Price took sell-side liquidity (SSL) on {{ticker}} {{interval}} and continued lower")
-
-// Liquidity Proximity Alerts (edge-triggered: fires once per approach, re-arms when price exits)
+alertcondition(enableLiquidity and alertLiquidityRun and bearRunDetected, "BSL Run (Upside Continuation)", "Price took BSL on {{ticker}} {{interval}} and continued higher")
+alertcondition(enableLiquidity and alertLiquidityRun and bullRunDetected, "SSL Run (Downside Continuation)", "Price took SSL on {{ticker}} {{interval}} and continued lower")
 alertcondition(enableLiquidity and alertApproachingLiquidity and triggerNearBSL, "Approaching BSL", "Price approaching buy-side liquidity on {{ticker}} {{interval}}")
 alertcondition(enableLiquidity and alertApproachingLiquidity and triggerNearSSL, "Approaching SSL", "Price approaching sell-side liquidity on {{ticker}} {{interval}}")
 
 // === CRYPTO REGIME ALERTS ===
-// Alerts for BTC.D regime shifts (gated by crypto module)
-alertcondition(effectiveCryptoModule and i_useBtcDom and btc_regime == 1 and btc_regime[1] != 1, "Alt Season Signal", "🌊 BTC.D falling on {{ticker}} {{interval}} - Alt season favorable for altcoins")
-alertcondition(effectiveCryptoModule and i_useBtcDom and btc_regime == -1 and btc_regime[1] != -1, "BTC Dominance Signal", "⚠️ BTC.D rising on {{ticker}} {{interval}} - Risk-off for altcoins")
+alertcondition(effectiveCryptoModule and i_useBtcDom and btc_regime == 1 and btc_regime[1] != 1, "Alt Season Signal", "BTC.D falling on {{ticker}} {{interval}} - Alt season favorable for altcoins")
+alertcondition(effectiveCryptoModule and i_useBtcDom and btc_regime == -1 and btc_regime[1] != -1, "BTC Dominance Signal", "BTC.D rising on {{ticker}} {{interval}} - Risk-off for altcoins")
