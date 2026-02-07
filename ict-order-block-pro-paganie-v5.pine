@@ -1,9 +1,32 @@
 //@version=6
-indicator("ICT Order Block Pro [Paganie] v4.1.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("ICT Order Block Pro [Paganie] v5.0.0", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============================================================================
-// ICT ORDER BLOCK PRO V4.1.0 - INSTITUTIONAL SMART MONEY CONCEPTS
+// ICT ORDER BLOCK PRO V5.0.0 - INSTITUTIONAL SMART MONEY CONCEPTS
 // Professional-grade order block detection with ICT/SMC methodology
+//
+// V5.0.0 - ICT Methodology Audit & Corrections:
+// • Session/Killzone scoring: OBs formed during London/NY/Overlap killzones
+//   and ICT macro windows receive quality boost (+1 to +3)
+// • Premium/Discount zone filtering: Bullish OBs in discount boosted,
+//   bearish OBs in premium boosted, wrong-zone OBs penalized (soft filter)
+// • OTE zone bonus: OBs in the 62-79% Fibonacci retracement zone get
+//   additional quality boost (ICT's Optimal Trade Entry zone)
+// • Sweep→OB linkage: OBs that form after a recent liquidity sweep
+//   (BSL/SSL) receive quality boost (ICT's Power of 3 narrative)
+// • Micro-sweep validation: Optional ICT-strict check that OB candle
+//   must sweep prior candle's H/L (configurable, off by default)
+// • Institutional method fix: Now finds the actual last opposite-color
+//   candle near the pivot instead of using the pivot candle itself
+// • Adaptive Elite threshold: When ICT context features are enabled,
+//   Elite requires BOTH technical quality AND ICT context alignment
+// • Out-of-box defaults: Show Only Strong/Elite ON by default (quality
+//   over clutter), crypto filters auto-detect chart type via syminfo.type
+// • Performance: HTF security calls consolidated (2→1 tuple), box/line
+//   extension guarded by isNewBar (eliminates redundant per-tick updates)
+// • UX: Settings reorganized from 8 groups (37-item Internal Tuning wall)
+//   into 11 focused groups: Mode, ICT Context, Modules, Crypto, Visuals,
+//   Alerts, Detection, Zones, Scoring, Liquidity, Power Row
 //
 // V4.1.0 - Optimized Out-of-Box Defaults:
 // • Signal timing now defaults to "Confirmed (bar close)" for reliable signals
@@ -87,14 +110,27 @@ int DIR_BEAR = -1
 string GRP_MODE = "⚙️ Mode"
 settingsMode = input.string("Auto", "Settings Mode", options=["Auto", "Manual"], group=GRP_MODE,
      tooltip="AUTO: Optimizes all settings based on timeframe.\nMANUAL: Full control over preset and advanced settings.")
-useAdaptiveScan = input.bool(true, "Adaptive Scan Window", group=GRP_MODE, tooltip="Automatically extends scan window in low volatility to find OBs.")
-
 manualPreset = input.string("Auto", "Preset Override", options=["Auto", "Scalping", "Swing", "Position"], group=GRP_MODE,
      tooltip="Override auto-detected preset (Manual mode only).\nAUTO: Use timeframe-based preset.\nSCALPING: More signals, faster.\nSWING: Balanced.\nPOSITION: Fewer, higher-quality signals.")
-detectionMethod = input.string("Scalper", "Detection Method", options=["Institutional", "Scalper"], group=GRP_MODE,
-     tooltip="INSTITUTIONAL: Pivot-based, stricter, fewer signals.\nSCALPER: Pattern-based, more signals, faster.")
 signalTiming = input.string("Confirmed (bar close)", "Signal Timing", options=["Realtime (intrabar)", "Confirmed (bar close)"], group=GRP_MODE,
      tooltip="CONFIRMED: Updates on bar close only (recommended for reliable signals).\nREALTIME: Updates on every tick (more responsive but noisier).")
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ICT CONTEXT SCORING
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_ICT = "📐 ICT Context Scoring"
+bool useSessionScoring = input.bool(true, "Session/Killzone Scoring", group=GRP_ICT,
+     tooltip="Boost OBs formed during ICT killzones (London 2-5AM, NY 7-10AM, Overlap 8-10AM ET) and macro windows. OBs formed off-session score lower. This is a core ICT principle: institutional activity concentrates in killzones.")
+bool useZoneScoring = input.bool(true, "Premium/Discount Scoring", group=GRP_ICT,
+     tooltip="Boost OBs in the correct zone per ICT: bullish OBs in discount (below 50%), bearish OBs in premium (above 50%). OBs in the wrong zone are penalized. Soft filter (reduces quality, does not invalidate). ICT: 'Buy at discount, sell at premium.'")
+bool useOteBonus = input.bool(true, "OTE Zone Bonus", group=GRP_ICT,
+     tooltip="Additional boost for OBs in the Optimal Trade Entry zone (62-79% Fibonacci retracement). ICT's highest-probability entry zone with 70.5% sweet spot.")
+bool useSweepLinkage = input.bool(true, "Sweep→OB Linkage", group=GRP_ICT,
+     tooltip="Boost OBs that form after a recent liquidity sweep (BSL/SSL). ICT's Power of 3: sweep provides liquidity for the displacement that creates the OB. Requires Liquidity Sweeps module enabled.")
+int sweepLinkageLookback = input.int(20, "Sweep Linkage Lookback", minval=5, maxval=50, group=GRP_ICT,
+     tooltip="Max bars to look back for a recent sweep when scoring OBs. Higher = more linkages found.")
+bool requireMicroSweep = input.bool(false, "Require Candle Sweep (Strict ICT)", group=GRP_ICT,
+     tooltip="ICT strict rule: the OB candle must sweep the prior candle's high/low to qualify. When OFF, micro-sweep adds +1 score instead of gating. Turn ON for purist ICT methodology (fewer but higher-quality OBs).")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // MODULES
@@ -110,45 +146,11 @@ showPowerRow = input.bool(true, "Power Row", group=GRP_MOD,
      tooltip="Display intrabar BUY/SELL pressure in dashboard.")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// VISUALS
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-string GRP_VIS = "🎨 Visuals"
-showDashboard = input.bool(true, "Show Dashboard", group=GRP_VIS, tooltip="Display the status dashboard panel.")
-dashboardLocation = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GRP_VIS, tooltip="Dashboard corner position.")
-dashboardSize = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=GRP_VIS, tooltip="Dashboard text size.")
-dashboardTransparency = input.int(90, "Dashboard Transparency", minval=0, maxval=90, step=5, group=GRP_VIS, tooltip="Dashboard background transparency.")
-showOnlyStrongElite = input.bool(false, "Show Only Strong/Elite OBs", group=GRP_VIS,
-     tooltip="Filter out Weak and Mid strength order blocks (recommended for cleaner charts).")
-renderMode = input.string("Simple fill", "Render Mode", options=["Simple fill", "Gradient", "Borders only"], group=GRP_VIS,
-     tooltip="Simple fill = uniform color (recommended). Gradient = layered effect. Borders only = minimal.")
-showLabels = input.bool(true, "Show Labels", group=GRP_VIS, tooltip="Show strength and volume labels on OBs.")
-showCornerAccents = input.bool(true, "Corner Accents", group=GRP_VIS, tooltip="Corner markers on Strong/Elite blocks.")
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ALERTS
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-string GRP_ALERT = "🔔 Alerts"
-alertNewOB = input.bool(true, "New Order Block", group=GRP_ALERT, tooltip="Alert when new OB forms.")
-alertTouch = input.bool(true, "Zone Touch", group=GRP_ALERT, tooltip="Alert when price enters OB zone.")
-alertReject = input.bool(true, "Rejection", group=GRP_ALERT, tooltip="Alert when price rejects from OB.")
-alertProximity = input.bool(true, "Approaching Zone", group=GRP_ALERT, tooltip="Alert when price approaches OB zones.")
-alertLiquidity = input.bool(true, "Liquidity Events", group=GRP_ALERT, tooltip="Alert on sweeps and liquidity runs. Essential for crypto trading.")
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// COLORS
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-string GRP_COL = "🎨 Colors"
-bullBorder = input.color(color.new(#00ff88, 0), "Bullish", group=GRP_COL, tooltip="Bullish OB color.")
-bearBorder = input.color(color.new(#ff3366, 0), "Bearish", group=GRP_COL, tooltip="Bearish OB color.")
-bslColor = input.color(color.new(#00bfff, 30), "BSL Level", group=GRP_COL, tooltip="Buy-side liquidity level color.")
-sslColor = input.color(color.new(#ff6600, 30), "SSL Level", group=GRP_COL, tooltip="Sell-side liquidity level color.")
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// CRYPTO FILTERS (Optional Module)
+// CRYPTO FILTERS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 string GRP_CRYPTO = "🪙 Crypto Filters"
 i_cryptoModule = input.bool(true, "Enable Crypto Filters", group=GRP_CRYPTO,
-     tooltip="Enable crypto-specific scoring factors (BTC.D, OI, weekend penalty). Optimized for crypto trading.")
+     tooltip="Enable crypto-specific scoring factors (BTC.D, OI, weekend penalty). In Auto mode, automatically disabled on non-crypto charts.")
 i_useBtcDom = input.bool(true, "BTC Dominance Filter", group=GRP_CRYPTO,
      tooltip="Boost demand zones during alt season, supply zones during BTC dominance.")
 i_useBtcCorr = input.bool(true, "BTC Correlation", group=GRP_CRYPTO,
@@ -159,84 +161,117 @@ i_useWeekend = input.bool(true, "Weekend Penalty", group=GRP_CRYPTO,
      tooltip="Reduce score for zones formed on weekends (low liquidity).")
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// VISUALS & COLORS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// INTERNAL TUNING (Exposed for Power Users)
+string GRP_VIS = "🎨 Visuals & Colors"
+showDashboard = input.bool(true, "Show Dashboard", group=GRP_VIS, tooltip="Display the status dashboard panel.")
+dashboardLocation = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GRP_VIS, tooltip="Dashboard corner position.")
+dashboardSize = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=GRP_VIS, tooltip="Dashboard text size.")
+dashboardTransparency = input.int(90, "Dashboard Transparency", minval=0, maxval=90, step=5, group=GRP_VIS, tooltip="Dashboard background transparency.")
+showOnlyStrongElite = input.bool(true, "Show Only Strong/Elite OBs", group=GRP_VIS,
+     tooltip="Filter out Weak and Mid strength order blocks. Disable to see all detected OBs including Weak and Mid.")
+renderMode = input.string("Simple fill", "Render Mode", options=["Simple fill", "Gradient", "Borders only"], group=GRP_VIS,
+     tooltip="Simple fill = uniform color (recommended). Gradient = layered effect. Borders only = minimal.")
+int gridSegments = input.int(8, "Gradient Segments", minval=2, maxval=20, group=GRP_VIS, tooltip="Layers for gradient render mode. Lower = faster.")
+showLabels = input.bool(true, "Show Labels", group=GRP_VIS, tooltip="Show strength and volume labels on OBs.")
+showCornerAccents = input.bool(true, "Corner Accents", group=GRP_VIS, tooltip="Corner markers on Strong/Elite blocks.")
+int fillAlpha = input.int(80, "Block Opacity", minval=0, maxval=100, group=GRP_VIS, tooltip="Transparency for OB fill. 0=solid, 100=invisible.")
+bool showRetests = input.bool(true, "Show Retest Labels", group=GRP_VIS, tooltip="Show retest count on OB labels.")
+bullBorder = input.color(color.new(#00ff88, 0), "Bullish Color", group=GRP_VIS, tooltip="Bullish OB color.")
+bearBorder = input.color(color.new(#ff3366, 0), "Bearish Color", group=GRP_VIS, tooltip="Bearish OB color.")
+bslColor = input.color(color.new(#00bfff, 30), "BSL Level Color", group=GRP_VIS, tooltip="Buy-side liquidity level color.")
+sslColor = input.color(color.new(#ff6600, 30), "SSL Level Color", group=GRP_VIS, tooltip="Sell-side liquidity level color.")
+color sweepBullColor = input.color(color.new(#00ff88, 20), "Sweep Bull Color", group=GRP_VIS, tooltip="Color for bullish sweep events.")
+color sweepBearColor = input.color(color.new(#ff3366, 20), "Sweep Bear Color", group=GRP_VIS, tooltip="Color for bearish sweep events.")
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-string GRP_INT = "🛠️ Internal Tuning"
+// ALERTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_ALERT = "🔔 Alerts"
+alertNewOB = input.bool(true, "New Order Block", group=GRP_ALERT, tooltip="Alert when new OB forms.")
+alertTouch = input.bool(true, "Zone Touch", group=GRP_ALERT, tooltip="Alert when price enters OB zone.")
+alertReject = input.bool(true, "Rejection", group=GRP_ALERT, tooltip="Alert when price rejects from OB.")
+alertProximity = input.bool(true, "Approaching Zone", group=GRP_ALERT, tooltip="Alert when price approaches OB zones.")
+alertLiquidity = input.bool(true, "Liquidity Events", group=GRP_ALERT, tooltip="Alert on sweeps and liquidity runs. Essential for crypto trading.")
+float proximityThreshold = input.float(0.5, "Alert Proximity (%)", step=0.1, group=GRP_ALERT, tooltip="Alert when price is within this % of OB (tighter = more actionable).")
+float liquidityProximityPct = input.float(0.3, "LQ Alert Proximity (%)", step=0.1, group=GRP_ALERT, tooltip="Alert when price is within this % of BSL/SSL.")
 
-// Detection
-int scalperLookback = input.int(10, "Scalper Lookback", minval=1, group=GRP_INT, tooltip="Bars to scan for impulse candles in Scalper mode.")
-int obScanWindow = input.int(3, "OB Scan Window", minval=1, group=GRP_INT, tooltip="Bars to scan back from impulse to find OB candle.")
-int gridSegments = input.int(8, "Gradient Segments", minval=2, maxval=20, group=GRP_INT, tooltip="Layers for gradient render mode. Lower = faster.")
-float dispAtrBodyMult = input.float(0.8, "Displacement Body (ATR)", step=0.1, group=GRP_INT, tooltip="Min body size relative to ATR for displacement.")
-float dispBodyToRangeMin = input.float(0.6, "Displacement % of Range", step=0.05, group=GRP_INT, tooltip="Body must be this % of candle range.")
-bool useDisplacement = input.bool(true, "Require Displacement", group=GRP_INT, tooltip="Require strong impulse candle after OB.")
-bool useFVG = input.bool(true, "Require FVG", group=GRP_INT, tooltip="Require Fair Value Gap confirmation.")
-bool useMSB = input.bool(true, "Require MSB", group=GRP_INT, tooltip="Require Market Structure Break confirmation.")
-bool useVolume = input.bool(true, "Use Volume Filter", group=GRP_INT, tooltip="Include volume in strength scoring.")
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DETECTION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_DET = "🔧 Detection"
+detectionMethod = input.string("Scalper", "Detection Method", options=["Institutional", "Scalper"], group=GRP_DET,
+     tooltip="INSTITUTIONAL: Pivot-based, stricter, fewer signals.\nSCALPER: Pattern-based, more signals, faster.")
+useAdaptiveScan = input.bool(true, "Adaptive Scan Window", group=GRP_DET, tooltip="Automatically extends scan window in low volatility to find OBs.")
+int scalperLookback = input.int(10, "Scalper Lookback", minval=1, group=GRP_DET, tooltip="Bars to scan for impulse candles in Scalper mode.")
+int obScanWindow = input.int(3, "OB Scan Window", minval=1, group=GRP_DET, tooltip="Bars to scan back from impulse to find OB candle.")
+float dispAtrBodyMult = input.float(0.8, "Displacement Body (ATR)", step=0.1, group=GRP_DET, tooltip="Min body size relative to ATR for displacement.")
+float dispBodyToRangeMin = input.float(0.6, "Displacement % of Range", step=0.05, group=GRP_DET, tooltip="Body must be this % of candle range.")
+bool useDisplacement = input.bool(true, "Require Displacement", group=GRP_DET, tooltip="Require strong impulse candle after OB.")
+bool useFVG = input.bool(true, "Require FVG", group=GRP_DET, tooltip="Require Fair Value Gap confirmation.")
+string fvgMode = input.string("Classic 3-candle", "FVG Mode", options=["Classic 3-candle", "Strict (body gap)", "Loose (wick gap)", "Off"], group=GRP_DET, tooltip="FVG detection strictness.")
+float fvgMinGapAtr = input.float(0.0, "Min FVG Gap (ATR)", step=0.1, group=GRP_DET, tooltip="Minimum gap size as multiple of ATR. 0=any gap.")
+bool useMSB = input.bool(true, "Require MSB", group=GRP_DET, tooltip="Require Market Structure Break confirmation.")
+int msbLookback = input.int(10, "MSB Lookback", minval=1, group=GRP_DET, tooltip="Bars to check for structure break.")
+bool msbUsePivotFallback = input.bool(true, "MSB Pivot Fallback", group=GRP_DET, tooltip="Use pivot high/low as minimum structure level.")
+bool useVolume = input.bool(true, "Use Volume Filter", group=GRP_DET, tooltip="Include volume in strength scoring.")
+string maxBlocksUser = input.string("Auto", "Max Active Blocks", options=["Auto", "5", "8", "10", "15", "20"], group=GRP_DET, tooltip="Maximum simultaneous order blocks tracked.")
 
-// FVG Settings
-string fvgMode = input.string("Classic 3-candle", "FVG Mode", options=["Classic 3-candle", "Strict (body gap)", "Loose (wick gap)", "Off"], group=GRP_INT, tooltip="FVG detection strictness.")
-float fvgMinGapAtr = input.float(0.0, "Min FVG Gap (ATR)", step=0.1, group=GRP_INT, tooltip="Minimum gap size as multiple of ATR. 0=any gap.")
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ZONES & MITIGATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_ZONE = "📏 Zones & Mitigation"
+float smartSizeAtrMult = input.float(1.2, "Smart Size (ATR)", step=0.1, group=GRP_ZONE, tooltip="Max zone height as ATR multiple for smart sizing.")
+string smartAnchor = input.string("Wick", "Zone Anchor", options=["Wick", "Close"], group=GRP_ZONE, tooltip="Anchor zone from wick or close price.")
+string mitigationMode = input.string("Auto", "Mitigation Mode", options=["Auto", "Wick", "Close", "Mean"], group=GRP_ZONE, tooltip="How to determine when OB is mitigated/invalidated.")
+float minPenZonePct = input.float(0.10, "Min Penetration (% Zone)", step=0.05, group=GRP_ZONE, tooltip="Min penetration beyond zone for mitigation.")
+float minPenAtrPct = input.float(0.05, "Min Penetration (% ATR)", step=0.01, group=GRP_ZONE, tooltip="Min penetration as ATR % for mitigation.")
+float meanMitigationLevel = input.float(0.5, "Mean Mitigation Level", step=0.1, group=GRP_ZONE, tooltip="0.5 = 50% into zone for Mean mitigation.")
+string touchMode = input.string("Wick", "Touch Mode", options=["Wick", "Close"], group=GRP_ZONE, tooltip="Wick=any touch counts, Close=close must enter zone.")
+string retestDebounce = input.string("Require exit before recount", "Retest Count Mode", options=["Require exit before recount", "Count each bar in zone"], group=GRP_ZONE, tooltip="How to count multiple touches/retests.")
+string rejectionCloseLevel = input.string("Mid", "Rejection Target", options=["Mid", "Top/Bottom", "Percent into zone"], group=GRP_ZONE, tooltip="Where price must close for rejection signal.")
+float rejectionPercent = input.float(0.5, "Rejection %", step=0.1, group=GRP_ZONE, tooltip="For 'Percent into zone' rejection mode.")
 
-// MSB Settings
-int msbLookback = input.int(10, "MSB Lookback", minval=1, group=GRP_INT, tooltip="Bars to check for structure break.")
-bool msbUsePivotFallback = input.bool(true, "MSB Pivot Fallback", group=GRP_INT, tooltip="Use pivot high/low as minimum structure level.")
-
-// Zones
-float smartSizeAtrMult = input.float(1.2, "Smart Size (ATR)", step=0.1, group=GRP_INT, tooltip="Max zone height as ATR multiple for smart sizing.")
-string smartAnchor = input.string("Wick", "Zone Anchor", options=["Wick", "Close"], group=GRP_INT, tooltip="Anchor zone from wick or close price.")
-string mitigationMode = input.string("Auto", "Mitigation Mode", options=["Auto", "Wick", "Close", "Mean"], group=GRP_INT, tooltip="How to determine when OB is mitigated/invalidated.")
-float minPenZonePct = input.float(0.10, "Min Penetration (% Zone)", step=0.05, group=GRP_INT, tooltip="Min penetration beyond zone for mitigation.")
-float minPenAtrPct = input.float(0.05, "Min Penetration (% ATR)", step=0.01, group=GRP_INT, tooltip="Min penetration as ATR % for mitigation.")
-float meanMitigationLevel = input.float(0.5, "Mean Mitigation Level", step=0.1, group=GRP_INT, tooltip="0.5 = 50% into zone for Mean mitigation.")
-
-// Touch & Retest
-string touchMode = input.string("Wick", "Touch Mode", options=["Wick", "Close"], group=GRP_INT, tooltip="Wick=any touch counts, Close=close must enter zone.")
-string retestDebounce = input.string("Require exit before recount", "Retest Count Mode", options=["Require exit before recount", "Count each bar in zone"], group=GRP_INT, tooltip="How to count multiple touches/retests.")
-string rejectionCloseLevel = input.string("Mid", "Rejection Target", options=["Mid", "Top/Bottom", "Percent into zone"], group=GRP_INT, tooltip="Where price must close for rejection signal.")
-float rejectionPercent = input.float(0.5, "Rejection %", step=0.1, group=GRP_INT, tooltip="For 'Percent into zone' rejection mode.")
-int fillAlpha = input.int(80, "Block Opacity", minval=0, maxval=100, group=GRP_INT, tooltip="Transparency for OB fill. 0=solid, 100=invisible.")
-bool showRetests = input.bool(true, "Show Retest Labels", group=GRP_INT, tooltip="Show retest count on OB labels.")
-
-// Strength Scoring
-float volScoreMult = input.float(2.0, "Volume Score Mult", step=0.1, group=GRP_INT, tooltip="Volume must exceed avg * this for +1 score.")
-float bodyScoreMult = input.float(1.5, "Body Score Mult", step=0.1, group=GRP_INT, tooltip="Body must exceed avg * this for +1 score.")
-int vpScoreBoost = input.int(1, "VP Score Boost", minval=0, group=GRP_INT, tooltip="Points added when VP confirms the zone.")
-int vpLookback = input.int(100, "VP Lookback", minval=10, group=GRP_INT, tooltip="Bars for Volume Profile analysis.")
-float vpThreshold = input.float(1.5, "VP Concentration Threshold", step=0.1, group=GRP_INT, tooltip="VP ratio needed for confirmation.")
-bool eliteRequiresVP = input.bool(true, "Elite Requires VP", group=GRP_INT, tooltip="Elite status requires Volume Profile confirmation.")
-bool eliteRequiresVolume = input.bool(true, "Elite Requires Volume", group=GRP_INT,
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SCORING
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_SCORE = "🏆 Scoring"
+float volScoreMult = input.float(2.0, "Volume Score Mult", step=0.1, group=GRP_SCORE, tooltip="Volume must exceed avg * this for +1 score.")
+float bodyScoreMult = input.float(1.5, "Body Score Mult", step=0.1, group=GRP_SCORE, tooltip="Body must exceed avg * this for +1 score.")
+int vpScoreBoost = input.int(1, "VP Score Boost", minval=0, group=GRP_SCORE, tooltip="Points added when VP confirms the zone.")
+int vpLookback = input.int(100, "VP Lookback", minval=10, group=GRP_SCORE, tooltip="Bars for Volume Profile analysis.")
+float vpThreshold = input.float(1.5, "VP Concentration Threshold", step=0.1, group=GRP_SCORE, tooltip="VP ratio needed for confirmation.")
+bool eliteRequiresVP = input.bool(true, "Elite Requires VP", group=GRP_SCORE, tooltip="Elite status requires Volume Profile confirmation.")
+bool eliteRequiresVolume = input.bool(true, "Elite Requires Volume", group=GRP_SCORE,
      tooltip="ICT methodology: Volume spike is essential for valid institutional order blocks. When enabled, Elite status requires volume confirmation regardless of other factors.")
-string maxBlocksUser = input.string("Auto", "Max Active Blocks", options=["Auto", "5", "8", "10", "15", "20"], group=GRP_INT)
 
-// Liquidity Settings
-bool showLiquidityLevels = input.bool(true, "Show LQ Levels", group=GRP_INT, tooltip="Display BSL/SSL horizontal lines.")
-bool showSweepEvents = input.bool(true, "Show Sweep Events", group=GRP_INT, tooltip="Highlight boxes when liquidity is swept.")
-bool showLiquidityRuns = input.bool(true, "Show LQ Runs (Continuation)", group=GRP_INT, tooltip="Track when price runs through liquidity.")
-bool markEqualHL = input.bool(true, "Mark Equal H/L", group=GRP_INT, tooltip="Identify clustered equal highs/lows.")
-int sweepLookback = input.int(20, "Sweep Lookback", minval=5, group=GRP_INT, tooltip="Bars to find swing highs/lows for liquidity (ICT standard: 20).")
-float equalHLThreshold = input.float(0.15, "Equal H/L Threshold (%)", step=0.05, group=GRP_INT, tooltip="Max % diff to consider levels equal (clustered liquidity).")
-float sweepWickMin = input.float(0.5, "Sweep Wick Min (ATR)", step=0.1, group=GRP_INT, tooltip="Min wick beyond level for valid sweep.")
-bool requireVolumeSpike = input.bool(true, "Sweep Requires Volume", group=GRP_INT, tooltip="Require above-avg volume for sweep.")
-int maxLiquidityLevelsInput = input.int(6, "Max LQ Levels", minval=1, maxval=20, group=GRP_INT, tooltip="Max BSL/SSL levels to track.")
-color sweepBullColor = input.color(color.new(#00ff88, 20), "Sweep Bull Color", group=GRP_INT)
-color sweepBearColor = input.color(color.new(#ff3366, 20), "Sweep Bear Color", group=GRP_INT)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// LIQUIDITY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_LIQ = "💧 Liquidity"
+bool showLiquidityLevels = input.bool(true, "Show LQ Levels", group=GRP_LIQ, tooltip="Display BSL/SSL horizontal lines.")
+bool showSweepEvents = input.bool(true, "Show Sweep Events", group=GRP_LIQ, tooltip="Highlight boxes when liquidity is swept.")
+bool showLiquidityRuns = input.bool(true, "Show LQ Runs (Continuation)", group=GRP_LIQ, tooltip="Track when price runs through liquidity.")
+bool markEqualHL = input.bool(true, "Mark Equal H/L", group=GRP_LIQ, tooltip="Identify clustered equal highs/lows.")
+int sweepLookback = input.int(20, "Sweep Lookback", minval=5, group=GRP_LIQ, tooltip="Bars to find swing highs/lows for liquidity (ICT standard: 20).")
+float equalHLThreshold = input.float(0.15, "Equal H/L Threshold (%)", step=0.05, group=GRP_LIQ, tooltip="Max % diff to consider levels equal (clustered liquidity).")
+float sweepWickMin = input.float(0.5, "Sweep Wick Min (ATR)", step=0.1, group=GRP_LIQ, tooltip="Min wick beyond level for valid sweep.")
+bool requireVolumeSpike = input.bool(true, "Sweep Requires Volume", group=GRP_LIQ, tooltip="Require above-avg volume for sweep.")
+int maxLiquidityLevelsInput = input.int(6, "Max LQ Levels", minval=1, maxval=20, group=GRP_LIQ, tooltip="Max BSL/SSL levels to track.")
 
-// Alert Tuning
-float proximityThreshold = input.float(0.5, "Alert Proximity (%)", step=0.1, group=GRP_INT, tooltip="Alert when price is within this % of OB (tighter = more actionable).")
-float liquidityProximityPct = input.float(0.3, "LQ Alert Proximity (%)", step=0.1, group=GRP_INT, tooltip="Alert when price is within this % of BSL/SSL.")
-
-// Power Row Tuning
-string powerMode = input.string("Auto", "Power Mode", options=["Auto", "Custom"], group=GRP_INT, tooltip="Auto scales settings by timeframe.")
-string powerLtf = input.string("1", "Power LTF", options=["1", "5", "15", "60", "240"], group=GRP_INT, tooltip="Lower timeframe for intrabar analysis (Custom mode).")
-string powerVolumeMethod = input.string("Pressure", "Power Volume Method", options=["Pressure", "Polarity"], group=GRP_INT, tooltip="Pressure=proportional, Polarity=binary buy/sell.")
-string powerTieBreak = input.string("Carry last direction", "Power Tie Break", options=["Carry last direction", "Use prev intrabar close", "Ignore dojis"], group=GRP_INT, tooltip="How to handle doji candles in Polarity mode.")
-float powerNeutralBandPct = input.float(15.0, "Power Neutral Band", step=1.0, group=GRP_INT, tooltip="% dominance below this shows NEUTRAL (higher = more stable).")
-int powerFlipConfirmBars = input.int(0, "Power Confirm Bars (0=Auto)", minval=0, group=GRP_INT, tooltip="Bars to confirm direction change. 0=auto.")
-int powerSmoothingLen = input.int(10, "Power Smoothing", minval=1, group=GRP_INT, tooltip="Smoothing period for power percentage (higher = more stable).")
-string powerSmoothingType = input.string("EMA", "Smoothing Type", options=["EMA", "SMA"], group=GRP_INT, tooltip="Smoothing algorithm.")
-int powerMinIntrabars = input.int(4, "Min Intrabars", minval=1, group=GRP_INT, tooltip="Min intrabars for confident reading.")
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// POWER ROW
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+string GRP_PWR = "⚡ Power Row"
+string powerMode = input.string("Auto", "Power Mode", options=["Auto", "Custom"], group=GRP_PWR, tooltip="Auto scales settings by timeframe.")
+string powerLtf = input.string("1", "Power LTF", options=["1", "5", "15", "60", "240"], group=GRP_PWR, tooltip="Lower timeframe for intrabar analysis (Custom mode).")
+string powerVolumeMethod = input.string("Pressure", "Power Volume Method", options=["Pressure", "Polarity"], group=GRP_PWR, tooltip="Pressure=proportional, Polarity=binary buy/sell.")
+string powerTieBreak = input.string("Carry last direction", "Power Tie Break", options=["Carry last direction", "Use prev intrabar close", "Ignore dojis"], group=GRP_PWR, tooltip="How to handle doji candles in Polarity mode.")
+float powerNeutralBandPct = input.float(15.0, "Power Neutral Band", step=1.0, group=GRP_PWR, tooltip="% dominance below this shows NEUTRAL (higher = more stable).")
+int powerFlipConfirmBars = input.int(0, "Power Confirm Bars (0=Auto)", minval=0, group=GRP_PWR, tooltip="Bars to confirm direction change. 0=auto.")
+int powerSmoothingLen = input.int(10, "Power Smoothing", minval=1, group=GRP_PWR, tooltip="Smoothing period for power percentage (higher = more stable).")
+string powerSmoothingType = input.string("EMA", "Smoothing Type", options=["EMA", "SMA"], group=GRP_PWR, tooltip="Smoothing algorithm.")
+int powerMinIntrabars = input.int(4, "Min Intrabars", minval=1, group=GRP_PWR, tooltip="Min intrabars for confident reading.")
 
 // === DERIVED SETTINGS ===
 // Simplified user interface maps to internal variables
@@ -258,6 +293,11 @@ string blockSizing = "Smart"
 string tfBasedPreset = is_scalping ? "Scalping" : is_swing ? "Swing" : "Position"
 string effectivePreset = (settingsMode == "Manual" and manualPreset != "Auto") ? manualPreset : tfBasedPreset
 bool effectiveAutoMode = settingsMode == "Auto"
+
+// Auto-detect crypto charts: in Auto mode, crypto filters only active on crypto charts
+// Crypto users: no change (syminfo.type == "crypto" is true). Non-crypto: prevents incorrect BTC.D scoring
+bool isCryptoChart = syminfo.type == "crypto"
+bool effectiveCryptoModule = effectiveAutoMode ? (i_cryptoModule and isCryptoChart) : i_cryptoModule
 
 // === AUTO-CONFIGURATION BASED ON PRESET ===
 int actualLookback = 5  // Default, overwritten by preset
@@ -741,46 +781,44 @@ float sma50 = ta.sma(close, 50)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // CRYPTO MARKET REGIME ENGINE (Optional Module) - OPTIMIZED
-// All calculations gated by i_cryptoModule to skip when disabled
+// All calculations gated by effectiveCryptoModule (auto-detects crypto charts in Auto mode)
 // ══════════════════════════════════════════════════════════════════════════════
 
 // --- BTC Chart Detection (only computed when crypto module active) ---
-bool is_btc_chart = i_cryptoModule ? str.contains(str.lower(syminfo.ticker), "btc") : false
+bool is_btc_chart = effectiveCryptoModule ? str.contains(str.lower(syminfo.ticker), "btc") : false
 
 // --- BTC Dominance Detection ---
-float btc_dom = i_cryptoModule and i_useBtcDom ? request.security("BTC.D", timeframe.period, close, ignore_invalid_symbol=true) : na
-float btc_dom_sma = i_cryptoModule and i_useBtcDom and not na(btc_dom) ? ta.sma(btc_dom, 30) : na
+float btc_dom = effectiveCryptoModule and i_useBtcDom ? request.security("BTC.D", timeframe.period, close, ignore_invalid_symbol=true) : na
+float btc_dom_sma = effectiveCryptoModule and i_useBtcDom and not na(btc_dom) ? ta.sma(btc_dom, 30) : na
 
 // BTC.D Regime: 1 = alt season (favorable for alts), -1 = BTC dominance (risk-off), 0 = neutral
 int btc_regime = 0
-if i_cryptoModule and i_useBtcDom and not na(btc_dom) and not na(btc_dom_sma)
+if effectiveCryptoModule and i_useBtcDom and not na(btc_dom) and not na(btc_dom_sma)
     if btc_dom > 60 and btc_dom > btc_dom_sma
         btc_regime := -1  // BTC dominance rising - risk-off for alts
     else if btc_dom < 55 and btc_dom < btc_dom_sma
         btc_regime := 1   // Alt season - favorable for alts
 
 // --- BTC Price Correlation ---
-float btc_close = i_cryptoModule and i_useBtcCorr ? (is_btc_chart ? close : request.security("BTCUSDT", timeframe.period, close, ignore_invalid_symbol=true)) : na
-float btc_sma = i_cryptoModule and i_useBtcCorr and not na(btc_close) ? ta.sma(btc_close, 50) : na
-int btc_trend = i_cryptoModule and not na(btc_close) and not na(btc_sma) ? (btc_close > btc_sma ? 1 : -1) : 0
+float btc_close = effectiveCryptoModule and i_useBtcCorr ? (is_btc_chart ? close : request.security("BTCUSDT", timeframe.period, close, ignore_invalid_symbol=true)) : na
+float btc_sma = effectiveCryptoModule and i_useBtcCorr and not na(btc_close) ? ta.sma(btc_close, 50) : na
+int btc_trend = effectiveCryptoModule and not na(btc_close) and not na(btc_sma) ? (btc_close > btc_sma ? 1 : -1) : 0
 
 // --- Open Interest Data ---
 string oi_ticker = syminfo.ticker + "_OI"
-float oi_data = i_cryptoModule and i_useOI ? request.security(oi_ticker, timeframe.period, close, ignore_invalid_symbol=true) : na
-float oi_change = i_cryptoModule and i_useOI and not na(oi_data) ? ta.change(oi_data) : na
-bool oi_bullish = i_cryptoModule and not na(oi_change) and oi_change > 0 and close > close[1]
-bool oi_bearish = i_cryptoModule and not na(oi_change) and oi_change > 0 and close < close[1]
+float oi_data = effectiveCryptoModule and i_useOI ? request.security(oi_ticker, timeframe.period, close, ignore_invalid_symbol=true) : na
+float oi_change = effectiveCryptoModule and i_useOI and not na(oi_data) ? ta.change(oi_data) : na
+bool oi_bullish = effectiveCryptoModule and not na(oi_change) and oi_change > 0 and close > close[1]
+bool oi_bearish = effectiveCryptoModule and not na(oi_change) and oi_change > 0 and close < close[1]
 
 // --- Weekend Detection (only when crypto module enabled) ---
-bool is_weekend = i_cryptoModule and i_useWeekend ? (dayofweek == dayofweek.saturday or dayofweek == dayofweek.sunday) : false
+bool is_weekend = effectiveCryptoModule and i_useWeekend ? (dayofweek == dayofweek.saturday or dayofweek == dayofweek.sunday) : false
 
 // --- HTF Trend Data (for Dashboard) ---
-// PERFORMANCE: Security calls MUST be at global scope, not inside conditionals
-// Gate by showDashboard and timeframe to skip unnecessary calls
+// PERFORMANCE: Consolidated into single tuple call (2 calls → 1)
 string _htfTf = tf_in_minutes < 60 ? "240" : tf_in_minutes < 240 ? "D" : ""
 bool _needHtfData = showDashboard and tf_in_minutes < 240
-float htfClose = _needHtfData ? request.security(syminfo.tickerid, _htfTf, close, ignore_invalid_symbol=true) : na
-float htfSma50 = _needHtfData ? request.security(syminfo.tickerid, _htfTf, ta.sma(close, 50), ignore_invalid_symbol=true) : na
+[htfClose, htfSma50] = request.security(syminfo.tickerid, _htfTf, [close, ta.sma(close, 50)], ignore_invalid_symbol=true)
 
 // Premium/Discount Zone Calculation (ICT concept)
 // Auto-scale lookback based on timeframe for optimal zone responsiveness
@@ -980,6 +1018,137 @@ checkMSB(int pivotIdx, int dispIdx, int lookback, string dir) =>
                 confirmed := true
     confirmed
 
+// === ICT CONTEXT SCORING FUNCTIONS (v5.0) ===
+
+// Session/Killzone scoring (all times in ET/New York)
+// Returns 0-3: 0=off-session, 1=secondary session, 2=killzone, 3=killzone+macro
+// Based on ICT methodology: institutional activity concentrates during killzones
+// Macro windows are precise intra-hour windows where IPDA executes price delivery
+getSessionScore(int barOffset) =>
+    int h = hour(time[barOffset], "America/New_York")
+    int m = minute(time[barOffset], "America/New_York")
+    int totalMin = h * 60 + m
+
+    // Killzone detection (ET/New York)
+    bool inLondonKZ = totalMin >= 120 and totalMin < 300        // 02:00-05:00 ET
+    bool inNyKZ = totalMin >= 420 and totalMin < 600            // 07:00-10:00 ET
+    bool inLdnNyOverlap = totalMin >= 480 and totalMin < 600    // 08:00-10:00 ET (highest institutional activity)
+    bool inLondonClose = totalMin >= 600 and totalMin < 720     // 10:00-12:00 ET
+    bool inAsiaKZ = totalMin >= 1140 and totalMin < 1320        // 19:00-22:00 ET
+
+    // Base session score
+    int score = 0
+    if inLdnNyOverlap
+        score := 2       // Highest: both sessions active simultaneously
+    else if inLondonKZ or inNyKZ
+        score := 2       // Primary killzones
+    else if inLondonClose
+        score := 1       // London Close (rebalancing, still institutional)
+    else if inAsiaKZ
+        score := 1       // Asia KZ (lower weight for forex, relevant for crypto/JPY)
+    // else: off-session = 0
+
+    // ICT Macro window bonus (stacks with killzone score)
+    // Precise windows from ICT 2024 mentorship where IPDA executes
+    // ICT Macro windows: London 2:33-3:00, 4:03-4:30 | NY AM 8:50-9:10, 9:50-10:10, 10:50-11:10 | Lunch 11:50-12:10 | PM 1:10-1:40 | Close 3:15-3:45
+    bool inMacro = (totalMin >= 153 and totalMin <= 180) or (totalMin >= 243 and totalMin <= 270) or (totalMin >= 530 and totalMin <= 550) or (totalMin >= 590 and totalMin <= 610) or (totalMin >= 650 and totalMin <= 670) or (totalMin >= 710 and totalMin <= 730) or (totalMin >= 790 and totalMin <= 820) or (totalMin >= 915 and totalMin <= 945)
+
+    if inMacro
+        score += 1       // Macro bonus stacks with killzone
+
+    score
+
+// Premium/Discount zone alignment scoring
+// Returns -1 to +2: -1=wrong zone, 0=neutral, +1=correct zone, +2=OTE zone
+// ICT: "Buy at discount, sell at premium" - institutions accumulate in OTE
+getZoneAlignmentScore(bool isBull, int barOffset) =>
+    int zScore = 0
+    float p = close[barOffset]
+
+    if isBull
+        // Bullish OB should be in discount (below equilibrium)
+        if p < zoneEquilibrium
+            zScore := 1  // Correct zone: buying at discount
+            // OTE bonus: 62-79% retracement = deepest discount, highest institutional interest
+            if useOteBonus and p >= oteLongBot and p <= oteLongTop
+                zScore := 2
+        else
+            zScore := -1  // Wrong zone: buying at premium
+    else
+        // Bearish OB should be in premium (above equilibrium)
+        if p > zoneEquilibrium
+            zScore := 1  // Correct zone: selling at premium
+            // OTE bonus: 62-79% retracement into premium
+            if useOteBonus and p >= oteShortBot and p <= oteShortTop
+                zScore := 2
+        else
+            zScore := -1  // Wrong zone: selling at discount
+
+    zScore
+
+// Micro-sweep check: ICT strict validation
+// OB candle must sweep the prior candle's H/L (candle-level liquidity grab)
+// Bullish OB (bearish candle): must sweep below prior candle's low
+// Bearish OB (bullish candle): must sweep above prior candle's high
+hasMicroSweepCheck(int obIdx, bool isBull) =>
+    bool swept = false
+    if obIdx >= 0 and obIdx + 1 <= bar_index
+        if isBull
+            swept := low[obIdx] < low[obIdx + 1]
+        else
+            swept := high[obIdx] > high[obIdx + 1]
+    swept
+
+// Macro-sweep linkage: check if a BSL/SSL sweep occurred recently
+// ICT Power of 3: Sweep provides liquidity for displacement → OB
+// Bullish OB benefits from SSL sweep (price took lows, reversed up)
+// Bearish OB benefits from BSL sweep (price took highs, reversed down)
+hasRecentMacroSweep(bool isBull, int lookbackBars) =>
+    bool found = false
+    if enableLiquidity  // Only when liquidity module is active
+        if isBull
+            int cnt = array.size(sslLevels)
+            if cnt > 0
+                for i = 0 to cnt - 1
+                    LiquiditySweep s = array.get(sslLevels, i)
+                    if s.swept and (bar_index - s.sweepBar) <= lookbackBars
+                        found := true
+                        break
+        else
+            int cnt = array.size(bslLevels)
+            if cnt > 0
+                for i = 0 to cnt - 1
+                    LiquiditySweep s = array.get(bslLevels, i)
+                    if s.swept and (bar_index - s.sweepBar) <= lookbackBars
+                        found := true
+                        break
+    found
+
+// Compute combined ICT context boost for an OB
+// Returns the total score adjustment from all ICT context factors
+getIctContextBoost(bool isBull, int barOffset, bool microSweep) =>
+    int boost = 0
+
+    // Session/Killzone (+0 to +3)
+    if useSessionScoring
+        boost += getSessionScore(barOffset)
+
+    // Premium/Discount + OTE (-1 to +2)
+    if useZoneScoring
+        boost += getZoneAlignmentScore(isBull, barOffset)
+
+    // Micro-sweep: when NOT a hard gate, adds +1 as quality factor
+    if not requireMicroSweep and microSweep
+        boost += 1
+
+    // Macro-sweep linkage (+1 for recent sweep)
+    if useSweepLinkage
+        int sweepLookbackEff = is_scalping ? sweepLinkageLookback : is_swing ? math.round(sweepLinkageLookback * 0.75) : math.round(sweepLinkageLookback * 0.5)
+        if hasRecentMacroSweep(isBull, sweepLookbackEff)
+            boost += 1
+
+    boost
+
 // === LIQUIDITY SWEEP DETECTION FUNCTIONS ===
 // Detect swing highs (potential BSL)
 findSwingHigh(int leftBars, int rightBars) =>
@@ -1135,7 +1304,7 @@ analyzeVolumeProfile(float obTop, float obBot, int lookback) =>
 // Returns score adjustment based on crypto market conditions
 getCryptoScoreBoost(bool isBullOB, int barOffset) =>
     int boost = 0
-    if not i_cryptoModule
+    if not effectiveCryptoModule
         boost
     else
         // BTC Correlation (+1 for alignment) - only for altcoins
@@ -1159,7 +1328,7 @@ getCryptoScoreBoost(bool isBullOB, int barOffset) =>
 
         boost
 
-getStrength(float vol, float body, bool trendAlign, bool isBullOB, int barOffset) =>
+getStrength(float vol, float body, bool trendAlign, bool isBullOB, int barOffset, int ictContextBoost) =>
     int score = 0
     if useVolume and vol > avgVol * volScoreMult
         score += 1
@@ -1171,9 +1340,17 @@ getStrength(float vol, float body, bool trendAlign, bool isBullOB, int barOffset
     // Add crypto boost
     score += getCryptoScoreBoost(isBullOB, barOffset)
 
-    score >= 2 ? "Strong" : score == 1 ? "Mid" : "Weak"
+    // Add ICT context boost (v5.0: session, zone, sweep factors)
+    score += ictContextBoost
 
-getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentration, bool isBullOB, int barOffset) =>
+    // Adaptive thresholds: when ICT context features are enabled, Elite requires
+    // BOTH technical quality AND ICT context alignment
+    bool ictFeaturesActive = useSessionScoring or useZoneScoring or useSweepLinkage
+    int eliteThresh = ictFeaturesActive ? 4 : 3
+
+    score >= eliteThresh ? "Elite" : score >= 2 ? "Strong" : score >= 1 ? "Mid" : "Weak"
+
+getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentration, bool isBullOB, int barOffset, int ictContextBoost) =>
     int score = 0
 
     // Volume confirmation check (ICT: volume spike essential for institutional OBs)
@@ -1195,23 +1372,30 @@ getEnhancedStrength(float vol, float body, bool trendAlign, float vpConcentratio
     if hasVPConfirmation
         score += vpScoreBoost
 
+    // ICT context boost (v5.0: session + zone + OTE + sweep factors)
+    score += ictContextBoost
+
     // Enhanced rating with VP (user can configure if Elite requires VP and/or Volume)
     // ICT methodology: Elite status should require volume confirmation
     bool volumeOkForElite = not eliteRequiresVolume or hasVolumeConfirmation
     bool vpOkForElite = not eliteRequiresVP or hasVPConfirmation
 
+    // Adaptive thresholds: when ICT context features are enabled,
+    // Elite requires BOTH technical quality AND ICT context alignment
+    // This prevents OBs from reaching Elite on base factors alone when ICT scoring is active
+    bool ictFeaturesActive = useSessionScoring or useZoneScoring or useSweepLinkage
+    int eliteThresh = ictFeaturesActive ? 5 : 3
+
     if useVolumeProfile
-        // Elite requires: score >= 3 AND volume check (if enabled) AND VP check (if enabled)
-        if score >= 3 and volumeOkForElite and vpOkForElite
+        if score >= eliteThresh and volumeOkForElite and vpOkForElite
             "Elite"
         else
-            score >= 2 ? "Strong" : score == 1 ? "Mid" : "Weak"
+            score >= 3 ? "Strong" : score >= 1 ? "Mid" : "Weak"
     else
-        // Without VP module, Elite still requires volume if eliteRequiresVolume is enabled
-        if score >= 3 and volumeOkForElite
+        if score >= eliteThresh and volumeOkForElite
             "Elite"
         else
-            score >= 2 ? "Strong" : score == 1 ? "Mid" : "Weak"
+            score >= 3 ? "Strong" : score >= 1 ? "Mid" : "Weak"
 
 // === PROXIMITY ALERT HELPER ===
 findNearestOB(array<OrderBlock> blocks, bool isBull) =>
@@ -1373,7 +1557,23 @@ checkScalperCondition(int tuning) =>
                 bearOB := true
                 break
 
-    [bearOB, bullOB, bearOBIdx, bullOBIdx, bearImpulseStrength, bullImpulseStrength]
+    // === MICRO-SWEEP VALIDATION (v5.0) ===
+    // ICT: OB candle must sweep prior candle's H/L (candle-level liquidity grab)
+    bool bullMicroSweep = false
+    bool bearMicroSweep = false
+
+    if bullOB
+        bullMicroSweep := hasMicroSweepCheck(bullOBIdx, true)
+        // Hard gate when requireMicroSweep is enabled
+        if requireMicroSweep and not bullMicroSweep
+            bullOB := false
+
+    if bearOB
+        bearMicroSweep := hasMicroSweepCheck(bearOBIdx, false)
+        if requireMicroSweep and not bearMicroSweep
+            bearOB := false
+
+    [bearOB, bullOB, bearOBIdx, bullOBIdx, bearImpulseStrength, bullImpulseStrength, bearMicroSweep, bullMicroSweep]
 
 // === VISUAL GENERATION ===
 createVolumeGradient(OrderBlock block, int leftBar, int segments, string rMode) =>
@@ -1602,30 +1802,26 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
         for i = blockCount - 1 to 0
             OrderBlock block = array.get(blocks, i)
 
-            // --- VISUAL UPDATE (from updateBlock) ---
-            // Extend boxes to bar_index + 1 so they cover the forming candle
-            // This runs every tick to ensure real-time extension
-            int extendToBar = bar_index + 1  // +1 to extend through forming candle
-
-            // Extend all volume boxes to current bar + 1
-            int volBoxCount = array.size(block.volumeBoxes)
-            if volBoxCount > 0
-                int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
-                for j = 0 to maxIdx
-                    box.set_right(array.get(block.volumeBoxes, j), extendToBar)
-
-            // Update label position every tick (uses bar_index now, not time)
-            if not na(block.volLabel)
-                label.set_x(block.volLabel, extendToBar)
-
-            // Update border lines every tick (uses bar_index now for uniform extension)
-            if not na(block.topLine)
-                line.set_x2(block.topLine, extendToBar)
-            if not na(block.botLine)
-                line.set_x2(block.botLine, extendToBar)
-
+            // --- VISUAL UPDATE ---
+            // Extend boxes/lines/labels to bar_index + 1 (covers forming candle)
+            // Only on new bar: bar_index doesn't change within a bar, so
+            // calling set_right/set_x2 every tick with the same value is wasted CPU
             if isNewBar
+                int extendToBar = bar_index + 1
                 block.lastUpdateBar := bar_index
+
+                int volBoxCount = array.size(block.volumeBoxes)
+                if volBoxCount > 0
+                    int maxIdx = math.min(safeSegments - 1, volBoxCount - 1)
+                    for j = 0 to maxIdx
+                        box.set_right(array.get(block.volumeBoxes, j), extendToBar)
+
+                if not na(block.volLabel)
+                    label.set_x(block.volLabel, extendToBar)
+                if not na(block.topLine)
+                    line.set_x2(block.topLine, extendToBar)
+                if not na(block.botLine)
+                    line.set_x2(block.botLine, extendToBar)
 
             if not block.mitigated
                 // --- MITIGATION CHECK ---
@@ -1689,9 +1885,7 @@ processAndUpdateBlocks(array<OrderBlock> blocks, bool isBull, int segments, int 
 
                 // --- LABEL UPDATE (only on state change) ---
                 if showAnyLabel and not na(block.volLabel)
-                    bool stateChanged = block.retestCount != block.lastRetestCount or
-                                       block.touched != block.lastTouched or
-                                       block.rejected != block.lastRejected
+                    bool stateChanged = block.retestCount != block.lastRetestCount or block.touched != block.lastTouched or block.rejected != block.lastRejected
                     if stateChanged
                         float labelY = block.top - (block.top - block.bot) * 0.25
                         label.set_y(block.volLabel, labelY)
@@ -1706,7 +1900,7 @@ trimBlocks(array<OrderBlock> blocks, int maxCount) =>
     if array.size(blocks) > maxCount
         deleteBlock(array.shift(blocks))
 
-createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCreate) =>
+createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCreate, bool microSweep) =>
     bool created = false
     if shouldCreate and idx > 0 and idx <= bar_index
         float top = high[idx]
@@ -1742,10 +1936,13 @@ createOrderBlock(int idx, bool isBull, array<OrderBlock> blocks, bool shouldCrea
         // Volume Profile analysis (Premium feature)
         float vpConcentration = useVolumeProfile ? analyzeVolumeProfile(top, bot, vpLookbackEff) : 0.0
 
-        // Enhanced strength with VP and crypto boost
+        // v5.0: Compute ICT context boost (session + zone + OTE + sweep linkage)
+        int ictBoost = getIctContextBoost(isBull, idx, microSweep)
+
+        // Enhanced strength with VP, crypto boost, and ICT context
         string strength = useVolumeProfile ?
-             getEnhancedStrength(vol, body, aligned, vpConcentration, isBull, idx) :
-             getStrength(vol, body, aligned, isBull, idx)
+             getEnhancedStrength(vol, body, aligned, vpConcentration, isBull, idx, ictBoost) :
+             getStrength(vol, body, aligned, isBull, idx, ictBoost)
 
         // Filter: Skip weak/mid blocks if only showing Strong/Elite
         bool skipNewBlock = showOnlyStrongElite and strength != "Strong" and strength != "Elite"
@@ -2004,6 +2201,12 @@ bool validBull = false
 bool validBear = false
 int scalperBullIdx = 0
 int scalperBearIdx = 0
+// v5.0: Track micro-sweep status for ICT context scoring
+bool detectedBullMicroSweep = false
+bool detectedBearMicroSweep = false
+// v5.0: Institutional method OB indices (may differ from pivot index)
+int instBullOBIdx = 0
+int instBearOBIdx = 0
 
 // === PERFORMANCE: Skip detection on intrabar ticks in Confirmed mode ===
 // OBs only form on bar close, so detection calculations are wasted on every tick
@@ -2031,11 +2234,14 @@ if shouldRunDetection and detectionMethod == "Institutional"
 
 if shouldRunDetection and detectionMethod == "Scalper"
     // === SCALPER DETECTION (ICT/SMC Method - Candle immediately before impulse) ===
-    [scalperBear, scalperBull, bearIdx, bullIdx, bearImpStr, bullImpStr] = checkScalperCondition(scalperLookback)
+    // v5.0: Expanded tuple with micro-sweep flags
+    [scalperBear, scalperBull, bearIdx, bullIdx, bearImpStr, bullImpStr, bearMS, bullMS] = checkScalperCondition(scalperLookback)
     validBull := scalperBull
     validBear := scalperBear
     scalperBullIdx := bullIdx
     scalperBearIdx := bearIdx
+    detectedBullMicroSweep := bullMS
+    detectedBearMicroSweep := bearMS
 
     // Mutual exclusivity: if both trigger, pick the one with stronger IMPULSE candle
     if validBull and validBear
@@ -2046,6 +2252,9 @@ if shouldRunDetection and detectionMethod == "Scalper"
             validBull := false
 else if shouldRunDetection
     // === INSTITUTIONAL DETECTION (Pivot-based with filters - stricter) ===
+    // v5.0 FIX: After finding pivot and validating displacement/FVG/MSB,
+    // scan to find the actual last OPPOSITE-COLOR candle near the pivot.
+    // ICT defines OB as "last opposite candle before displacement", not the pivot itself.
     bool isPivotLow = false
     bool isPivotHigh = false
 
@@ -2093,13 +2302,69 @@ else if shouldRunDetection
         if validBear and not hasBearMSB
             validBear := false
 
+    // === v5.0 FIX: Find last opposite-color candle near the pivot ===
+    // ICT OB = last bearish candle before bullish displacement (and vice versa)
+    // The pivot identifies WHERE structure reversed; now find the ACTUAL OB candle
+    instBullOBIdx := actualLookback  // Default: pivot candle (fallback)
+    instBearOBIdx := actualLookback
+
+    if validBull
+        // Bullish OB: need a bearish (down-close) candle at or near the pivot low
+        bool foundOpposite = false
+        // Check pivot candle first (ideal case: pivot IS the bearish candle)
+        if close[actualLookback] < open[actualLookback]
+            instBullOBIdx := actualLookback
+            foundOpposite := true
+        else
+            // Scan backwards from pivot to find nearest bearish candle
+            for j = 1 to effectiveScanWindow
+                int ci = actualLookback + j
+                if ci > bar_index
+                    break
+                if close[ci] < open[ci]
+                    instBullOBIdx := ci
+                    foundOpposite := true
+                    break
+        if not foundOpposite
+            validBull := false  // No opposite candle found → not a valid ICT OB
+
+    if validBear
+        // Bearish OB: need a bullish (up-close) candle at or near the pivot high
+        bool foundOpposite = false
+        if close[actualLookback] > open[actualLookback]
+            instBearOBIdx := actualLookback
+            foundOpposite := true
+        else
+            for j = 1 to effectiveScanWindow
+                int ci = actualLookback + j
+                if ci > bar_index
+                    break
+                if close[ci] > open[ci]
+                    instBearOBIdx := ci
+                    foundOpposite := true
+                    break
+        if not foundOpposite
+            validBear := false
+
+    // v5.0: Micro-sweep check for institutional method
+    if validBull
+        detectedBullMicroSweep := hasMicroSweepCheck(instBullOBIdx, true)
+        if requireMicroSweep and not detectedBullMicroSweep
+            validBull := false
+
+    if validBear
+        detectedBearMicroSweep := hasMicroSweepCheck(instBearOBIdx, false)
+        if requireMicroSweep and not detectedBearMicroSweep
+            validBear := false
+
 // === CREATE ORDER BLOCKS ===
 bool shouldCreateBull = barstate.isconfirmed and validBull
 bool shouldCreateBear = barstate.isconfirmed and validBear
-int bullIdx = detectionMethod == "Scalper" ? scalperBullIdx : actualLookback
-int bearIdx = detectionMethod == "Scalper" ? scalperBearIdx : actualLookback
-newBullOB := createOrderBlock(bullIdx, true, bullBlocks, shouldCreateBull)
-newBearOB := createOrderBlock(bearIdx, false, bearBlocks, shouldCreateBear)
+// v5.0: Institutional method uses the found opposite candle, not the pivot
+int bullIdx = detectionMethod == "Scalper" ? scalperBullIdx : instBullOBIdx
+int bearIdx = detectionMethod == "Scalper" ? scalperBearIdx : instBearOBIdx
+newBullOB := createOrderBlock(bullIdx, true, bullBlocks, shouldCreateBull, detectedBullMicroSweep)
+newBearOB := createOrderBlock(bearIdx, false, bearBlocks, shouldCreateBear, detectedBearMicroSweep)
 
 // === UPDATE & MITIGATION (OPTIMIZED: Single-pass processing) ===
 // PERFORMANCE: Combined update + process + isInAny check into single iteration
@@ -2176,8 +2441,8 @@ if shouldRunLiquidity
     bullSweepDetected := bullSweep
     bullRunDetected := bullRun
 
-    // 5. Update visuals (only if showing levels)
-    if showLiquidityLevels
+    // 5. Update visuals (only on new bar — bar_index doesn't change within a bar)
+    if showLiquidityLevels and (barstate.isnew or barstate.isfirst)
         updateLiquidityLevels(bslLevels)
         updateLiquidityLevels(sslLevels)
 
@@ -2214,22 +2479,20 @@ getDashboardPosition(string loc) =>
 
 if showDashboard and barstate.islast
     // Check if location, transparency, or size changed - need to recreate table
-    bool settingsChanged = (not na(lastDashboardLocation) and dashboardLocation != lastDashboardLocation) or
-                           (not na(lastDashboardTransparency) and dashboardTransparency != lastDashboardTransparency) or
-                           (not na(lastDashboardSize) and dashboardSize != lastDashboardSize)
+    bool settingsChanged = (not na(lastDashboardLocation) and dashboardLocation != lastDashboardLocation) or (not na(lastDashboardTransparency) and dashboardTransparency != lastDashboardTransparency) or (not na(lastDashboardSize) and dashboardSize != lastDashboardSize)
     if settingsChanged
         if not na(dashboard)
             table.delete(dashboard)
             dashboard := na
 
     if na(dashboard)
-        dashboard := table.new(getDashboardPosition(dashboardLocation), 7, 12, bgcolor=color.new(#000000, dashboardTransparency),
+        dashboard := table.new(getDashboardPosition(dashboardLocation), 7, 14, bgcolor=color.new(#000000, dashboardTransparency),
              border_color=color.new(color.white, 70), border_width=1)
         lastDashboardLocation := dashboardLocation
         lastDashboardTransparency := dashboardTransparency
         lastDashboardSize := dashboardSize
 
-    table.clear(dashboard, 0, 0, 6, 11)
+    table.clear(dashboard, 0, 0, 6, 13)
 
     // Header with mode tags
     table.merge_cells(dashboard, 0, 0, 6, 0)
@@ -2397,6 +2660,53 @@ if showDashboard and barstate.islast
     table.cell(dashboard, 5, zoneDetailRow, "", text_size=dashTextSize, width=0)
     table.cell(dashboard, 6, zoneDetailRow, "", text_size=dashTextSize, width=0)
 
+    // === ICT SESSION CONTEXT (v5.0) ===
+    if useSessionScoring
+        int sessionRow = 12
+        int sessionDetailRow = 13
+        // Compute current session context for display
+        int curSessionScore = getSessionScore(0)
+        int curH = hour(time, "America/New_York")
+        int curM = minute(time, "America/New_York")
+        int curTotalMin = curH * 60 + curM
+
+        // Determine session name
+        bool curLdnKZ = curTotalMin >= 120 and curTotalMin < 300
+        bool curNyKZ = curTotalMin >= 420 and curTotalMin < 600
+        bool curOverlap = curTotalMin >= 480 and curTotalMin < 600
+        bool curLdnClose = curTotalMin >= 600 and curTotalMin < 720
+        bool curAsiaKZ = curTotalMin >= 1140 and curTotalMin < 1320
+
+        string sessionName = curOverlap ? "LDN/NY" : curLdnKZ ? "LONDON" : curNyKZ ? "NEW YORK" : curLdnClose ? "LDN CLOSE" : curAsiaKZ ? "ASIA" : "OFF"
+        color sessionCol = curSessionScore >= 2 ? color.new(#00ff88, 0) : curSessionScore == 1 ? color.new(#ffd700, 0) : color.gray
+
+        // Check macro window
+        bool curMacro = (curTotalMin >= 153 and curTotalMin <= 180) or (curTotalMin >= 243 and curTotalMin <= 270) or (curTotalMin >= 530 and curTotalMin <= 550) or (curTotalMin >= 590 and curTotalMin <= 610) or (curTotalMin >= 650 and curTotalMin <= 670) or (curTotalMin >= 710 and curTotalMin <= 730) or (curTotalMin >= 790 and curTotalMin <= 820) or (curTotalMin >= 915 and curTotalMin <= 945)
+        string macroTag = curMacro ? " MACRO" : ""
+
+        table.cell(dashboard, 0, sessionRow, "SESSION", text_color=color.gray, text_size=dashTextSize, width=0)
+        table.cell(dashboard, 1, sessionRow, sessionName + macroTag, text_color=sessionCol, text_size=dashTextSize, width=0)
+        table.cell(dashboard, 2, sessionRow, "+" + str.tostring(curSessionScore), text_color=sessionCol, text_size=dashTextSize, width=0)
+        table.cell(dashboard, 3, sessionRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 4, sessionRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 5, sessionRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 6, sessionRow, "", text_size=dashTextSize, width=0)
+
+        // ICT context summary row
+        // Show zone score for the "aligned" direction: inDiscount=true → bullish OB is correct here
+        // This works because inDiscount maps to isBull (buy in discount, sell in premium)
+        int curZoneScore = useZoneScoring ? getZoneAlignmentScore(inDiscount, 0) : 0
+        string zoneTag = curZoneScore >= 2 ? "OTE" : curZoneScore == 1 ? "OK" : curZoneScore == 0 ? "—" : "WRONG"
+        color zoneTagCol = curZoneScore >= 2 ? color.new(#ffd700, 0) : curZoneScore >= 1 ? color.new(#00ff88, 0) : curZoneScore == 0 ? color.gray : color.new(#ff3366, 0)
+
+        table.cell(dashboard, 0, sessionDetailRow, "ICT CTX", text_color=color.gray, text_size=dashTextSize, width=0)
+        table.cell(dashboard, 1, sessionDetailRow, "Zone:" + zoneTag, text_color=zoneTagCol, text_size=dashTextSize, width=0)
+        table.cell(dashboard, 2, sessionDetailRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 3, sessionDetailRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 4, sessionDetailRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 5, sessionDetailRow, "", text_size=dashTextSize, width=0)
+        table.cell(dashboard, 6, sessionDetailRow, "", text_size=dashTextSize, width=0)
+
 // === ALERTS ===
 // Note: alertcondition must be at global scope
 // Gate conditions with granular alert flags
@@ -2430,5 +2740,5 @@ alertcondition(enableLiquidity and alertApproachingLiquidity and triggerNearSSL,
 
 // === CRYPTO REGIME ALERTS ===
 // Alerts for BTC.D regime shifts (gated by crypto module)
-alertcondition(i_cryptoModule and i_useBtcDom and btc_regime == 1 and btc_regime[1] != 1, "Alt Season Signal", "🌊 BTC.D falling on {{ticker}} {{interval}} - Alt season favorable for altcoins")
-alertcondition(i_cryptoModule and i_useBtcDom and btc_regime == -1 and btc_regime[1] != -1, "BTC Dominance Signal", "⚠️ BTC.D rising on {{ticker}} {{interval}} - Risk-off for altcoins")
+alertcondition(effectiveCryptoModule and i_useBtcDom and btc_regime == 1 and btc_regime[1] != 1, "Alt Season Signal", "🌊 BTC.D falling on {{ticker}} {{interval}} - Alt season favorable for altcoins")
+alertcondition(effectiveCryptoModule and i_useBtcDom and btc_regime == -1 and btc_regime[1] != -1, "BTC Dominance Signal", "⚠️ BTC.D rising on {{ticker}} {{interval}} - Risk-off for altcoins")
